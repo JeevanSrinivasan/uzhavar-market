@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useLanguage } from '@/app/context/LanguageContext'
 import LanguageToggle from '@/app/components/LanguageToggle'
@@ -16,12 +16,10 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
+  const [cancellingOrderId, setCancellingOrderId] = useState(null)
+  const [cancelModalOrder, setCancelModalOrder] = useState(null)
 
-  useEffect(() => {
-    loadOrders()
-  }, [])
-
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     setLoading(true)
     setMessage('')
 
@@ -61,6 +59,75 @@ export default function OrdersPage() {
 
     setOrders(data || [])
     setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    loadOrders()
+  }, [loadOrders])
+
+  async function cancelOrder(order) {
+    if (!order?.id) return
+
+    const currentStatus = String(order.order_status || '').trim().toLowerCase()
+
+    if (currentStatus !== 'pending' && currentStatus !== 'confirmed') {
+      alert(t('orders.cannotCancelShippedNotice'))
+      setCancelModalOrder(null)
+      return
+    }
+
+    if (cancellingOrderId === order.id) return
+
+    setCancellingOrderId(order.id)
+
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) {
+        alert('Please login to continue.')
+        return
+      }
+
+      const { data: updatedOrder, error } = await supabase
+        .from('orders')
+        .update({ order_status: 'cancelled' })
+        .eq('id', order.id)
+        .eq('customer_id', user.id)
+        .in('order_status', ['pending', 'confirmed'])
+        .select('*')
+        .maybeSingle()
+
+      if (error) {
+        console.error('CANCEL ERROR:', error)
+        alert(error.message || t('orders.cancelFailed'))
+        return
+      }
+
+      if (!updatedOrder) {
+        alert(t('orders.cannotCancelShippedNotice'))
+        return
+      }
+
+      setOrders((prev) =>
+        prev.map((item) =>
+          item.id === order.id ? { ...item, order_status: 'cancelled' } : item
+        )
+      )
+
+      alert(
+        t('orders.cancelSuccessNotice', {
+          amount: `₹${Number(order.total_amount || 0).toFixed(2)}`,
+        })
+      )
+      setCancelModalOrder(null)
+    } catch (err) {
+      console.error('CANCEL ORDER ERROR:', err)
+      alert(t('orders.cancelFailed'))
+    } finally {
+      setCancellingOrderId(null)
+    }
   }
 
   function getStatusText(status) {
@@ -78,6 +145,7 @@ export default function OrdersPage() {
     if (status === 'shipped') return 'text-[#155724] bg-[#d4edda]'
     if (status === 'delivered') return 'text-[#155724] bg-[#d4edda]'
     if (status === 'completed') return 'text-[#155724] bg-[#d4edda]'
+    if (status === 'cancelled') return 'text-red-700 bg-red-100'
 
     return 'text-gray-700 bg-gray-200'
   }
@@ -235,67 +303,156 @@ export default function OrdersPage() {
                 </div>
               </div>
 
-              <div className="flex items-center mt-6 overflow-x-auto pb-2 min-w-full text-xs sm:text-sm">
-                <div
-                  className={`min-w-[70px] sm:min-w-[90px] text-center flex flex-col items-center gap-1 ${
-                    order.order_status === 'pending' ? 'opacity-100' : 'opacity-50'
-                  }`}
-                >
-                  <span className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center font-semibold mb-1">
-                    1
-                  </span>
-                  <p className="font-medium">{t('orders.stepPlaced')}</p>
+              {order.order_status === "cancelled" ? (
+                <div className="mt-6 p-4 sm:p-5 bg-red-50 border border-red-200 rounded-xl">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-full bg-red-600 text-white flex items-center justify-center font-bold text-sm shrink-0 shadow-sm">
+                      ✕
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <strong className="block text-sm sm:text-base font-bold text-red-900 mb-1">
+                        {t("orders.cancelledRefundTitle")}
+                      </strong>
+                      <p className="text-xs sm:text-sm text-red-800 m-0 leading-relaxed">
+                        {t("orders.cancelledRefundBody", {
+                          amount: `₹${Number(order.total_amount || 0).toFixed(2)}`,
+                        })}
+                      </p>
+                      <p className="text-xs text-red-700 font-semibold mt-2 mb-0">
+                        {t("orders.cancelledSupportNote", { email: "uzhavankural.3@gmail.com" })}
+                      </p>
+                    </div>
+                  </div>
                 </div>
+              ) : (
+                <div className="flex items-center mt-6 overflow-x-auto pb-2 min-w-full text-xs sm:text-sm">
+                  <div
+                    className={`min-w-[70px] sm:min-w-[90px] text-center flex flex-col items-center gap-1 ${
+                      order.order_status === 'pending' ? 'opacity-100' : 'opacity-50'
+                    }`}
+                  >
+                    <span className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center font-semibold mb-1">
+                      1
+                    </span>
+                    <p className="font-medium">{t('orders.stepPlaced')}</p>
+                  </div>
 
-                <div className="h-0.5 min-w-[20px] sm:min-w-[30px] flex-1 bg-gray-200 mb-5" />
+                  <div className="h-0.5 min-w-[20px] sm:min-w-[30px] flex-1 bg-gray-200 mb-5" />
 
-                <div
-                  className={`min-w-[70px] sm:min-w-[90px] text-center flex flex-col items-center gap-1 ${
-                    ['confirmed', 'shipped', 'delivered', 'completed'].includes(order.order_status)
-                      ? 'opacity-100'
-                      : 'opacity-40'
-                  }`}
-                >
-                  <span className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center font-semibold mb-1">
-                    2
-                  </span>
-                  <p className="font-medium">{t('orders.stepConfirmed')}</p>
+                  <div
+                    className={`min-w-[70px] sm:min-w-[90px] text-center flex flex-col items-center gap-1 ${
+                      ['confirmed', 'shipped', 'delivered', 'completed'].includes(order.order_status)
+                        ? 'opacity-100'
+                        : 'opacity-40'
+                    }`}
+                  >
+                    <span className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center font-semibold mb-1">
+                      2
+                    </span>
+                    <p className="font-medium">{t('orders.stepConfirmed')}</p>
+                  </div>
+
+                  <div className="h-0.5 min-w-[20px] sm:min-w-[30px] flex-1 bg-gray-200 mb-5" />
+
+                  <div
+                    className={`min-w-[70px] sm:min-w-[90px] text-center flex flex-col items-center gap-1 ${
+                      ['shipped', 'delivered', 'completed'].includes(order.order_status)
+                        ? 'opacity-100'
+                        : 'opacity-40'
+                    }`}
+                  >
+                    <span className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center font-semibold mb-1">
+                      3
+                    </span>
+                    <p className="font-medium">{t('orders.stepShipped')}</p>
+                  </div>
+
+                  <div className="h-0.5 min-w-[20px] sm:min-w-[30px] flex-1 bg-gray-200 mb-5" />
+
+                  <div
+                    className={`min-w-[70px] sm:min-w-[90px] text-center flex flex-col items-center gap-1 ${
+                      ['delivered', 'completed'].includes(order.order_status)
+                        ? 'opacity-100'
+                        : 'opacity-40'
+                    }`}
+                  >
+                    <span className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center font-semibold mb-1">
+                      4
+                    </span>
+                    <p className="font-medium">{t('orders.stepDelivered')}</p>
+                  </div>
                 </div>
+              )}
 
-                <div className="h-0.5 min-w-[20px] sm:min-w-[30px] flex-1 bg-gray-200 mb-5" />
-
-                <div
-                  className={`min-w-[70px] sm:min-w-[90px] text-center flex flex-col items-center gap-1 ${
-                    ['shipped', 'delivered', 'completed'].includes(order.order_status)
-                      ? 'opacity-100'
-                      : 'opacity-40'
-                  }`}
-                >
-                  <span className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center font-semibold mb-1">
-                    3
-                  </span>
-                  <p className="font-medium">{t('orders.stepShipped')}</p>
+              <div className="mt-5 pt-4 border-t border-gray-100 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                <div>
+                  {order.order_status === "shipped" && (
+                    <span className="text-xs text-gray-500 font-medium">
+                      🔒 {t("orders.cannotCancelShippedNotice")}
+                    </span>
+                  )}
                 </div>
-
-                <div className="h-0.5 min-w-[20px] sm:min-w-[30px] flex-1 bg-gray-200 mb-5" />
-
-                <div
-                  className={`min-w-[70px] sm:min-w-[90px] text-center flex flex-col items-center gap-1 ${
-                    ['delivered', 'completed'].includes(order.order_status)
-                      ? 'opacity-100'
-                      : 'opacity-40'
-                  }`}
-                >
-                  <span className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center font-semibold mb-1">
-                    4
-                  </span>
-                  <p className="font-medium">{t('orders.stepDelivered')}</p>
-                </div>
+                {(order.order_status === "pending" || order.order_status === "confirmed") && (
+                  <button
+                    type="button"
+                    onClick={() => setCancelModalOrder(order)}
+                    disabled={cancellingOrderId === order.id}
+                    className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 px-4 py-2 rounded-lg font-bold text-xs sm:text-sm transition-colors cursor-pointer text-center disabled:opacity-50 self-end sm:self-auto"
+                  >
+                    ✕ {t("orders.cancelOrderBtn")}
+                  </button>
+                )}
               </div>
             </div>
           ))}
         </div>
+
+        {cancelModalOrder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-100 animate-in fade-in zoom-in duration-150">
+              <div className="w-12 h-12 rounded-full bg-red-100 text-red-700 flex items-center justify-center text-xl font-bold mb-4">
+                ✕
+              </div>
+              <h3 className="text-lg font-bold text-gray-900 mb-2">
+                {t("orders.cancelOrderModalTitle", { id: cancelModalOrder.id.slice(0, 8) })}
+              </h3>
+              <p className="text-sm text-gray-600 mb-3 leading-relaxed">
+                {t("orders.cancelOrderModalPrompt")}
+              </p>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 mb-4 text-xs text-amber-900 leading-relaxed">
+                <strong>
+                  ⚠️ {t("orders.cancelRefundNotice", {
+                    amount: `₹${Number(cancelModalOrder.total_amount || 0).toFixed(2)}`,
+                  })}
+                </strong>
+              </div>
+              <p className="text-xs text-gray-500 mb-5 leading-normal">
+                {t("orders.cancelOrderModalWarning")}
+              </p>
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setCancelModalOrder(null)}
+                  disabled={cancellingOrderId === cancelModalOrder.id}
+                  className="px-4 py-2.5 rounded-xl border border-gray-300 text-gray-700 font-bold text-sm hover:bg-gray-50 cursor-pointer transition-colors"
+                >
+                  {t("orders.keepOrderBtn")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => cancelOrder(cancelModalOrder)}
+                  disabled={cancellingOrderId === cancelModalOrder.id}
+                  className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  {cancellingOrderId === cancelModalOrder.id
+                    ? t("orders.cancellingOrder")
+                    : t("orders.confirmCancelBtn")}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </main>
-  )
+  );
 }

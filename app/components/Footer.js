@@ -112,6 +112,11 @@ export default function Footer() {
                   {t('footer.refundCancellation')}
                 </Link>
               </li>
+              <li>
+                <Link href="/shipping-policy" className="hover:text-green-400 transition-colors">
+                  {t('footer.shippingPolicy')}
+                </Link>
+              </li>
             </ul>
           </div>
 
@@ -160,6 +165,10 @@ export default function Footer() {
             <span>•</span>
             <Link href="/terms" className="hover:text-green-300 transition-colors">
               {t('footer.termsShort')}
+            </Link>
+            <span>•</span>
+            <Link href="/shipping-policy" className="hover:text-green-300 transition-colors">
+              {t('footer.shippingShort')}
             </Link>
             <span>•</span>
             <Link href="/refund-policy" className="hover:text-green-300 transition-colors">

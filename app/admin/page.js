@@ -1506,6 +1506,19 @@ async function rejectReview(review) {
       }
     }
 
+    if (
+      order.order_status ===
+      'cancelled'
+    ) {
+      return {
+        type: 'cancelled',
+        text:
+          order.payment_status === 'paid'
+            ? '🚫 Cancelled by Customer — Manual Refund to UPI Needed'
+            : '🚫 Cancelled by Customer',
+      }
+    }
+
     return null
   }
 
@@ -1534,8 +1547,11 @@ async function rejectReview(review) {
 
   async function handleLogout() {
     await supabase.auth.signOut()
-
-    router.replace('/login')
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login'
+    } else {
+      router.replace('/login')
+    }
   }
 
   // =====================================================
@@ -1813,6 +1829,13 @@ async function rejectReview(review) {
       (order) =>
         order.order_status ===
         'delivered'
+    ).length
+
+  const cancelledOrders =
+    orders.filter(
+      (order) =>
+        order.order_status ===
+        'cancelled'
     ).length
 
   const pendingPayments =
@@ -3416,7 +3439,17 @@ async function rejectReview(review) {
                         >
 
                           <span
-                            className="py-[6px] px-[10px] rounded-[20px] text-[12px] font-semibold max-w-full box-border"
+                            className={`py-[6px] px-[10px] rounded-[20px] text-[12px] font-semibold max-w-full box-border ${
+                              order.order_status === 'cancelled'
+                                ? 'bg-red-100 text-red-800 border border-red-200'
+                                : order.order_status === 'delivered'
+                                ? 'bg-green-100 text-green-800'
+                                : order.order_status === 'shipped'
+                                ? 'bg-purple-100 text-purple-800'
+                                : order.order_status === 'confirmed'
+                                ? 'bg-blue-100 text-blue-800'
+                                : 'bg-orange-100 text-orange-800'
+                            }`}
                           >
                             {
                               order.order_status
@@ -4038,6 +4071,26 @@ async function rejectReview(review) {
                               style={
                                 styles.completedText
                               }
+                            >
+                              {
+                                nextAction.text
+                              }
+                            </span>
+
+                          ) : nextAction?.type ===
+                            'cancelled' ? (
+
+                            <span
+                              style={{
+                                color: '#b91c1c',
+                                fontWeight: 700,
+                                fontSize: '13px',
+                                background: '#fef2f2',
+                                padding: '6px 12px',
+                                borderRadius: '8px',
+                                border: '1px solid #fecaca',
+                                display: 'inline-block',
+                              }}
                             >
                               {
                                 nextAction.text

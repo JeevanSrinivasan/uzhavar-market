@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useLanguage } from "@/app/context/LanguageContext";
@@ -12,6 +12,8 @@ export default function CustomerOrdersPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
   const [updatingOrderId, setUpdatingOrderId] = useState(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState(null);
+  const [cancelModalOrder, setCancelModalOrder] = useState(null);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [reviewRatings, setReviewRatings] = useState({});
@@ -19,11 +21,7 @@ export default function CustomerOrdersPage() {
   const [submittedReviews, setSubmittedReviews] = useState({});
   const [reviewSubmitting, setReviewSubmitting] = useState(null);
 
-  useEffect(() => {
-    loadOrders();
-  }, []);
-
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     try {
       setLoading(true);
       setMessage("");
@@ -69,7 +67,11 @@ export default function CustomerOrdersPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [router, t]);
+
+  useEffect(() => {
+    loadOrders();
+  }, [loadOrders]);
 
   async function confirmDelivery(order) {
     if (!order?.id) return;
@@ -132,6 +134,74 @@ export default function CustomerOrdersPage() {
       setErrorMessage(t("common.somethingWentWrong"));
     } finally {
       setUpdatingOrderId(null);
+    }
+  }
+
+  async function cancelOrder(order) {
+    if (!order?.id) return;
+
+    const currentStatus = String(order.order_status || "").trim().toLowerCase();
+
+    if (currentStatus !== "pending" && currentStatus !== "confirmed") {
+      setErrorMessage(t("orders.cannotCancelShippedNotice"));
+      setCancelModalOrder(null);
+      return;
+    }
+
+    if (cancellingOrderId === order.id) return;
+
+    setCancellingOrderId(order.id);
+    setMessage("");
+    setErrorMessage("");
+
+    try {
+      const {
+        data: { user },
+        error: userError,
+      } = await supabase.auth.getUser();
+
+      if (userError || !user) {
+        router.push("/login");
+        return;
+      }
+
+      const { data: updatedOrder, error } = await supabase
+        .from("orders")
+        .update({ order_status: "cancelled" })
+        .eq("id", order.id)
+        .eq("customer_id", user.id)
+        .in("order_status", ["pending", "confirmed"])
+        .select("id, customer_id, order_status, payment_status, total_amount")
+        .maybeSingle();
+
+      if (error) {
+        console.error("CANCEL ORDER ERROR:", JSON.stringify(error, null, 2));
+        setErrorMessage(error.message || t("orders.cancelFailed"));
+        return;
+      }
+
+      if (!updatedOrder) {
+        setErrorMessage(t("orders.cannotCancelShippedNotice"));
+        return;
+      }
+
+      setOrders((currentOrders) =>
+        currentOrders.map((item) =>
+          item.id === order.id ? { ...item, order_status: "cancelled" } : item
+        )
+      );
+
+      setMessage(
+        t("orders.cancelSuccessNotice", {
+          amount: `₹${Number(order.total_amount || 0).toFixed(2)}`,
+        })
+      );
+      setCancelModalOrder(null);
+    } catch (error) {
+      console.error("CANCEL ORDER ERROR:", error);
+      setErrorMessage(t("orders.cancelFailed"));
+    } finally {
+      setCancellingOrderId(null);
     }
   }
 
@@ -283,7 +353,9 @@ export default function CustomerOrdersPage() {
                 const statusClasses = getStatusClasses(orderStatus);
                 const paymentClasses = getPaymentClasses(paymentStatus);
                 const isUpdating = updatingOrderId === order.id;
+                const isCancelling = cancellingOrderId === order.id;
                 const canConfirmDelivery = orderStatus === "shipped";
+                const canCancelOrder = orderStatus === "pending" || orderStatus === "confirmed";
 
                 return (
                   <div key={order.id} className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6 shadow-sm">
@@ -328,64 +400,114 @@ export default function CustomerOrdersPage() {
                       </div>
                     </div>
 
-                    <div className="mt-5 p-4 sm:p-5 bg-gray-50 border border-gray-100 rounded-xl overflow-hidden">
-                      <h3 className="text-base font-bold text-gray-900 mb-4">{t("orders.orderProgress")}</h3>
-                      <div className="flex items-center w-full overflow-x-auto pb-2">
-                        <div className="flex flex-col items-center min-w-[70px] text-center shrink-0">
-                          <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 bg-green-700">
-                            {orderStatus !== "pending" ? "✓" : "1"}
+                    {orderStatus === "cancelled" ? (
+                      <div className="mt-5 p-4 sm:p-5 bg-red-50/70 border border-red-200 rounded-xl overflow-hidden">
+                        <h3 className="text-base font-bold text-red-900 mb-4">{t("orders.orderProgress")}</h3>
+                        <div className="flex items-center w-full max-w-xs pb-2">
+                          <div className="flex flex-col items-center min-w-[70px] text-center shrink-0">
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 bg-green-700">
+                              ✓
+                            </div>
+                            <span className="text-xs font-semibold text-gray-700 mt-2">
+                              {t("orders.stepPlaced")}
+                            </span>
                           </div>
-                          <span className="text-xs font-semibold text-gray-600 mt-2">
-                            {t("orders.stepPlaced")}
-                          </span>
-                        </div>
-                        <div className="h-0.5 bg-gray-300 flex-1 min-w-[30px] mx-2 -mt-6"></div>
-                        <div className="flex flex-col items-center min-w-[70px] text-center shrink-0">
-                          <div
-                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                              ["confirmed", "shipped", "delivered"].includes(orderStatus)
-                                ? "bg-green-700 text-white"
-                                : "bg-gray-200 text-gray-500"
-                            }`}
-                          >
-                            {["confirmed", "shipped", "delivered"].includes(orderStatus) ? "✓" : "2"}
+                          <div className="h-0.5 bg-red-300 flex-1 min-w-[30px] mx-2 -mt-6"></div>
+                          <div className="flex flex-col items-center min-w-[70px] text-center shrink-0">
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 bg-red-600">
+                              ✕
+                            </div>
+                            <span className="text-xs font-bold text-red-700 mt-2">
+                              {t("orders.stepCancelled")}
+                            </span>
                           </div>
-                          <span className="text-xs font-semibold text-gray-600 mt-2">
-                            {t("orders.stepConfirmed")}
-                          </span>
-                        </div>
-                        <div className="h-0.5 bg-gray-300 flex-1 min-w-[30px] mx-2 -mt-6"></div>
-                        <div className="flex flex-col items-center min-w-[70px] text-center shrink-0">
-                          <div
-                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                              ["shipped", "delivered"].includes(orderStatus)
-                                ? "bg-green-700 text-white"
-                                : "bg-gray-200 text-gray-500"
-                            }`}
-                          >
-                            {["shipped", "delivered"].includes(orderStatus) ? "✓" : "3"}
-                          </div>
-                          <span className="text-xs font-semibold text-gray-600 mt-2">
-                            {t("orders.stepShipped")}
-                          </span>
-                        </div>
-                        <div className="h-0.5 bg-gray-300 flex-1 min-w-[30px] mx-2 -mt-6"></div>
-                        <div className="flex flex-col items-center min-w-[70px] text-center shrink-0">
-                          <div
-                            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
-                              orderStatus === "delivered"
-                                ? "bg-green-700 text-white"
-                                : "bg-gray-200 text-gray-500"
-                            }`}
-                          >
-                            {orderStatus === "delivered" ? "✓" : "4"}
-                          </div>
-                          <span className="text-xs font-semibold text-gray-600 mt-2">
-                            {t("orders.stepDelivered")}
-                          </span>
                         </div>
                       </div>
-                    </div>
+                    ) : (
+                      <div className="mt-5 p-4 sm:p-5 bg-gray-50 border border-gray-100 rounded-xl overflow-hidden">
+                        <h3 className="text-base font-bold text-gray-900 mb-4">{t("orders.orderProgress")}</h3>
+                        <div className="flex items-center w-full overflow-x-auto pb-2">
+                          <div className="flex flex-col items-center min-w-[70px] text-center shrink-0">
+                            <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white shrink-0 bg-green-700">
+                              {orderStatus !== "pending" ? "✓" : "1"}
+                            </div>
+                            <span className="text-xs font-semibold text-gray-600 mt-2">
+                              {t("orders.stepPlaced")}
+                            </span>
+                          </div>
+                          <div className="h-0.5 bg-gray-300 flex-1 min-w-[30px] mx-2 -mt-6"></div>
+                          <div className="flex flex-col items-center min-w-[70px] text-center shrink-0">
+                            <div
+                              className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                                ["confirmed", "shipped", "delivered"].includes(orderStatus)
+                                  ? "bg-green-700 text-white"
+                                  : "bg-gray-200 text-gray-500"
+                              }`}
+                            >
+                              {["confirmed", "shipped", "delivered"].includes(orderStatus) ? "✓" : "2"}
+                            </div>
+                            <span className="text-xs font-semibold text-gray-600 mt-2">
+                              {t("orders.stepConfirmed")}
+                            </span>
+                          </div>
+                          <div className="h-0.5 bg-gray-300 flex-1 min-w-[30px] mx-2 -mt-6"></div>
+                          <div className="flex flex-col items-center min-w-[70px] text-center shrink-0">
+                            <div
+                              className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                                ["shipped", "delivered"].includes(orderStatus)
+                                  ? "bg-green-700 text-white"
+                                  : "bg-gray-200 text-gray-500"
+                              }`}
+                            >
+                              {["shipped", "delivered"].includes(orderStatus) ? "✓" : "3"}
+                            </div>
+                            <span className="text-xs font-semibold text-gray-600 mt-2">
+                              {t("orders.stepShipped")}
+                            </span>
+                          </div>
+                          <div className="h-0.5 bg-gray-300 flex-1 min-w-[30px] mx-2 -mt-6"></div>
+                          <div className="flex flex-col items-center min-w-[70px] text-center shrink-0">
+                            <div
+                              className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                                orderStatus === "delivered"
+                                  ? "bg-green-700 text-white"
+                                  : "bg-gray-200 text-gray-500"
+                              }`}
+                            >
+                              {orderStatus === "delivered" ? "✓" : "4"}
+                            </div>
+                            <span className="text-xs font-semibold text-gray-600 mt-2">
+                              {t("orders.stepDelivered")}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {orderStatus === "cancelled" && (
+                      <div className="mt-5 p-4 sm:p-5 bg-red-50 border border-red-200 rounded-xl">
+                        <div className="flex items-start gap-3">
+                          <div className="w-9 h-9 rounded-full bg-red-600 text-white flex items-center justify-center font-bold text-base shrink-0 shadow-sm">
+                            ✕
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <strong className="block text-sm sm:text-base font-bold text-red-900 mb-1">
+                              {t("orders.cancelledRefundTitle")}
+                            </strong>
+                            <p className="text-xs sm:text-sm text-red-800 m-0 leading-relaxed">
+                              {t("orders.cancelledRefundBody", {
+                                amount: `₹${Number(order.total_amount || 0).toFixed(2)}`,
+                              })}
+                            </p>
+                            <p className="text-xs text-red-700 font-semibold mt-2.5 mb-0">
+                              {t("orders.cancelledSupportNote", {
+                                email: "uzhavankural.3@gmail.com",
+                              })}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {canConfirmDelivery && (
                       <div className="mt-5 p-4 sm:p-5 bg-yellow-50 border border-yellow-200 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -577,19 +699,83 @@ export default function CustomerOrdersPage() {
                       <div>
                         <span className="block text-gray-500 text-xs mb-1">{t("orders.created")}</span>
                         <strong className="text-sm font-bold text-gray-900">{formatDateTime(order.created_at)}</strong>
+                        {orderStatus === "shipped" && (
+                          <span className="block text-[11px] text-gray-500 mt-1 font-medium">
+                            🔒 {t("orders.cannotCancelShippedNotice")}
+                          </span>
+                        )}
                       </div>
-                      <button
-                        onClick={() => router.push(`/customer/orders/${order.id}`)}
-                        className="bg-white border border-green-700 text-green-700 px-4 py-2 rounded-lg font-bold text-sm hover:bg-green-50 transition-colors w-full sm:w-auto cursor-pointer text-center"
-                      >
-                        {t("orders.viewOrder")} →
-                      </button>
+                      <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                        {canCancelOrder && (
+                          <button
+                            type="button"
+                            onClick={() => setCancelModalOrder(order)}
+                            disabled={isCancelling}
+                            className="bg-red-50 hover:bg-red-100 border border-red-200 text-red-700 px-4 py-2 rounded-lg font-bold text-sm transition-colors flex-1 sm:flex-initial cursor-pointer text-center disabled:opacity-60"
+                          >
+                            ✕ {t("orders.cancelOrderBtn")}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/customer/orders/${order.id}`)}
+                          className="bg-white border border-green-700 text-green-700 px-4 py-2 rounded-lg font-bold text-sm hover:bg-green-50 transition-colors flex-1 sm:flex-initial cursor-pointer text-center"
+                        >
+                          {t("orders.viewOrder")} →
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
               })}
             </div>
           </>
+        )}
+
+        {cancelModalOrder && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-100 animate-in fade-in zoom-in duration-150">
+              <div className="w-12 h-12 rounded-full bg-red-100 text-red-700 flex items-center justify-center text-xl font-bold mb-4">
+                ✕
+              </div>
+              <h3 className="text-lg font-bold text-gray-900 mb-2">
+                {t("orders.cancelOrderModalTitle", { id: cancelModalOrder.id.slice(0, 8) })}
+              </h3>
+              <p className="text-sm text-gray-600 mb-3 leading-relaxed">
+                {t("orders.cancelOrderModalPrompt")}
+              </p>
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 mb-4 text-xs text-amber-900 leading-relaxed">
+                <strong>
+                  ⚠️ {t("orders.cancelRefundNotice", {
+                    amount: `₹${Number(cancelModalOrder.total_amount || 0).toFixed(2)}`,
+                  })}
+                </strong>
+              </div>
+              <p className="text-xs text-gray-500 mb-5 leading-normal">
+                {t("orders.cancelOrderModalWarning")}
+              </p>
+              <div className="flex flex-col-reverse sm:flex-row justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setCancelModalOrder(null)}
+                  disabled={cancellingOrderId === cancelModalOrder.id}
+                  className="px-4 py-2.5 rounded-xl border border-gray-300 text-gray-700 font-bold text-sm hover:bg-gray-50 cursor-pointer transition-colors"
+                >
+                  {t("orders.keepOrderBtn")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => cancelOrder(cancelModalOrder)}
+                  disabled={cancellingOrderId === cancelModalOrder.id}
+                  className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-sm cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  {cancellingOrderId === cancelModalOrder.id
+                    ? t("orders.cancellingOrder")
+                    : t("orders.confirmCancelBtn")}
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </main>

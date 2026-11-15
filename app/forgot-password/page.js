@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useLanguage } from '@/app/context/LanguageContext'
 import LanguageToggle from '@/app/components/LanguageToggle'
 import { supabase } from '../../lib/supabase'
@@ -9,8 +9,19 @@ import { showToast } from '../components/Toast'
 export default function ForgotPassword() {
   const { t } = useLanguage()
   const [email, setEmail] = useState('')
+  const [sentEmail, setSentEmail] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const sp = new URLSearchParams(window.location.search)
+      const qEmail = sp.get('email')
+      if (qEmail) {
+        setEmail(qEmail.trim())
+      }
+    }
+  }, [])
 
   async function handleReset(e) {
     e.preventDefault()
@@ -18,11 +29,12 @@ export default function ForgotPassword() {
     setMessage('')
     setLoading(true)
 
+    const targetEmail = email.trim()
     const redirectTo = typeof window !== 'undefined'
       ? `${window.location.origin}/reset-password`
       : 'http://localhost:3000/reset-password'
 
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+    const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
       redirectTo,
     })
 
@@ -42,9 +54,10 @@ export default function ForgotPassword() {
       return
     }
 
-    const successMsg = t('auth.resetLinkSent')
+    const successMsg = t('auth.resetLinkSentToEmail', { email: targetEmail }) || t('auth.resetLinkSent')
     setMessage({ text: successMsg, isError: false })
-    showToast(successMsg, 'success', 5000)
+    showToast(successMsg, 'success', 6000)
+    setSentEmail(targetEmail)
     setEmail('')
     setLoading(false)
   }
@@ -72,27 +85,43 @@ export default function ForgotPassword() {
             onChange={(e) => setEmail(e.target.value)}
             placeholder={t('auth.emailPlaceholder')}
             required
-            className="w-full p-3 border border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-600"
+            style={{ color: '#111827', backgroundColor: '#ffffff' }}
+            className="w-full p-3 bg-white text-gray-900 border border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-600"
           />
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full p-3 mt-6 rounded-lg bg-green-800 text-white text-base font-semibold hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full p-3 mt-6 rounded-lg bg-green-800 text-white text-base font-semibold hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
-            {loading ? t('auth.sending') : t('auth.sendResetLink')}
+            {loading ? t('auth.sending') : `✉️ ${t('auth.sendResetLink')}`}
           </button>
         </form>
 
         {message?.text && (
           <div
-            className={`mt-5 p-3 rounded-lg text-center text-sm font-medium ${
+            className={`mt-5 p-4 rounded-xl text-center text-sm font-medium ${
               message.isError
                 ? 'bg-red-50 text-red-700 border border-red-200'
-                : 'bg-green-50 text-green-800 border border-green-200'
+                : 'bg-emerald-50 text-emerald-800 border border-emerald-200'
             }`}
           >
-            {message.text}
+            <p className="m-0 mb-2">{message.text}</p>
+            {!message.isError && (
+              <div className="mt-3 pt-3 border-t border-emerald-200/60 flex flex-col gap-2">
+                <span className="text-xs text-emerald-700">
+                  💡 Check your spam/promotions folder if not seen within 2 minutes.
+                </span>
+                <a
+                  href="https://mail.google.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block py-2 px-3 bg-emerald-800 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-colors"
+                >
+                  📬 {t('auth.openGmail')}
+                </a>
+              </div>
+            )}
           </div>
         )}
 

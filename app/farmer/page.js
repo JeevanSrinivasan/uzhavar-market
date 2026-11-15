@@ -135,7 +135,11 @@ export default function FarmerDashboard() {
 
   async function handleLogout() {
     await supabase.auth.signOut()
-    router.replace('/login')
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login'
+    } else {
+      router.replace('/login')
+    }
   }
 
   if (loading) {
@@ -340,6 +344,15 @@ export default function FarmerDashboard() {
             <span className="text-2xl sm:text-3xl mb-0.5 sm:mb-1">👤</span>
             <strong className="text-xs sm:text-base md:text-lg text-gray-800 font-bold leading-tight">{t('farmer.myProfile')}</strong>
             <span className="text-[10px] sm:text-xs md:text-sm text-gray-500 leading-snug line-clamp-2">{t('farmer.myProfileDesc')}</span>
+          </button>
+
+          <button
+            onClick={() => router.push('/farmer/profile#security')}
+            className="bg-white border border-gray-200 rounded-xl sm:rounded-2xl p-2.5 sm:p-5 md:p-6 text-left cursor-pointer flex flex-col gap-1 sm:gap-2 shadow-xs hover:shadow-md hover:border-green-600 transition-all active:scale-95"
+          >
+            <span className="text-2xl sm:text-3xl mb-0.5 sm:mb-1">🔐</span>
+            <strong className="text-xs sm:text-base md:text-lg text-gray-800 font-bold leading-tight">{t('farmer.securityTitle')}</strong>
+            <span className="text-[10px] sm:text-xs md:text-sm text-gray-500 leading-snug line-clamp-2">{t('farmer.securityDesc')}</span>
           </button>
         </div>
       </section>

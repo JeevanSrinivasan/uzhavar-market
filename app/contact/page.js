@@ -82,6 +82,27 @@ export default function ContactPage() {
               </div>
             </div>
 
+            {/* OPERATING ADDRESS CARD */}
+            <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-xs flex items-start gap-4">
+              <div className="p-3 bg-emerald-50 text-emerald-800 rounded-xl shrink-0">
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider m-0">
+                  {t('contact.addressTitle')}
+                </h2>
+                <p className="text-sm font-bold text-gray-900 mt-1 mb-0.5 leading-snug">
+                  {t('contact.addressVal')}
+                </p>
+                <p className="text-xs text-gray-500 m-0">
+                  {t('contact.addressSub')}
+                </p>
+              </div>
+            </div>
+
             {/* DIGITAL DESK INFO */}
             <div className="bg-white p-6 rounded-2xl border border-gray-200 shadow-xs flex items-start gap-4">
               <div className="p-3 bg-blue-50 text-blue-800 rounded-xl shrink-0">

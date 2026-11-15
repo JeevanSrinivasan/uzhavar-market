@@ -274,7 +274,8 @@ export default function ResetPassword() {
                 placeholder={t('auth.newPasswordPlaceholder')}
                 required
                 minLength={6}
-                className="w-full h-12 px-3.5 pr-11 border border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent bg-white"
+                style={{ color: '#111827', backgroundColor: '#ffffff' }}
+                className="w-full h-12 px-3.5 pr-11 border border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent bg-white text-gray-900"
               />
 
               <button
@@ -310,7 +311,8 @@ export default function ResetPassword() {
                 placeholder={t('auth.confirmPasswordPlaceholder')}
                 required
                 minLength={6}
-                className="w-full h-12 px-3.5 pr-11 border border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent bg-white"
+                style={{ color: '#111827', backgroundColor: '#ffffff' }}
+                className="w-full h-12 px-3.5 pr-11 border border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent bg-white text-gray-900"
               />
 
               <button

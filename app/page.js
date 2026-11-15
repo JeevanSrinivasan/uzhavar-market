@@ -203,12 +203,13 @@ export default function Home() {
   // =========================
   async function handleLogout() {
     await supabase.auth.signOut();
-
     setUser(null);
     setRole(null);
-
-    router.push("/login");
-    router.refresh();
+    if (typeof window !== "undefined") {
+      window.location.href = "/login";
+    } else {
+      router.push("/login");
+    }
   }
 
   // =========================

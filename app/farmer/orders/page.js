@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../../lib/supabase'
 import { ensureFarmerAccess } from '../../../lib/farmerAuth'
@@ -19,11 +19,7 @@ export default function FarmerOrders() {
 
   const [searchTerm, setSearchTerm] = useState('')
 
-  useEffect(() => {
-    loadOrders()
-  }, [])
-
-  async function loadOrders() {
+  const loadOrders = useCallback(async () => {
     setLoading(true)
     setMessage('')
 
@@ -146,7 +142,11 @@ export default function FarmerOrders() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [router])
+
+  useEffect(() => {
+    loadOrders()
+  }, [loadOrders])
 
   async function updateOrderStatus(orderId, newStatus) {
     setUpdating(orderId)
@@ -278,6 +278,11 @@ export default function FarmerOrders() {
         (item) => String(item.order?.order_status || '').toLowerCase() === 'delivered'
       )
     }
+    if (filter === 'cancelled') {
+      result = result.filter(
+        (item) => String(item.order?.order_status || '').toLowerCase() === 'cancelled'
+      )
+    }
     if (filter === 'paid') {
       result = result.filter(
         (item) => String(item.settlement_status || '').toLowerCase() === 'paid'
@@ -313,14 +318,15 @@ export default function FarmerOrders() {
     const deliveredOrderIds = new Set()
 
     orders.forEach((item) => {
+      const status = String(item.order?.order_status || '').toLowerCase()
+      if (status === 'cancelled') return
+
       const itemTotal = Number(item.item_total || 0)
       const calculatedCommission = Number(item.calculatedCommission || 0)
       const settlementAmount = Number(item.calculatedSettlement || 0)
 
       sales += itemTotal
       commission += calculatedCommission
-
-      const status = String(item.order?.order_status || '').toLowerCase()
       const settlementStatus = String(item.settlement_status || '').toLowerCase()
 
       if (status === 'delivered') {
@@ -495,7 +501,7 @@ export default function FarmerOrders() {
               {t('farmer.orders')}
             </h2>
             <div className="flex flex-wrap gap-[10px]">
-              {['all', 'pending', 'confirmed', 'shipped', 'delivered', 'paid', 'settlement_pending'].map(
+              {['all', 'pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'paid', 'settlement_pending'].map(
                 (filterName) => {
                   const filterLabels = {
                     all: t('farmer.allOrdersFilter', { count: orders.length }),
@@ -503,6 +509,7 @@ export default function FarmerOrders() {
                     confirmed: t('farmer.confirmedOrdersFilter'),
                     shipped: t('farmer.shippedOrdersFilter'),
                     delivered: t('farmer.deliveredOrdersFilter'),
+                    cancelled: t('farmer.cancelledOrdersFilter'),
                     paid: t('farmer.settlementPaidFilter'),
                     settlement_pending: t('farmer.settlementPendingFilter'),
                   }
@@ -726,6 +733,10 @@ export default function FarmerOrders() {
                     ) : orderStatus === 'delivered' ? (
                       <div className="bg-emerald-50 text-emerald-800 px-[16px] py-[12px] rounded-lg font-bold w-full text-center sm:w-auto border border-emerald-200">
                         ✓ {t('farmer.deliveryConfirmedCustomer')}
+                      </div>
+                    ) : orderStatus === 'cancelled' ? (
+                      <div className="bg-red-50 text-red-700 px-[16px] py-[12px] rounded-lg font-bold w-full text-center sm:w-auto border border-red-200 text-sm">
+                        🚫 {t('orders.statusCancelled')} — {t('farmer.doNotDispatch')}
                       </div>
                     ) : (
                       <div className="bg-gray-100 text-gray-500 px-[16px] py-[12px] rounded-lg font-bold w-full text-center sm:w-auto">

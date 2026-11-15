@@ -1,21 +1,32 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 import { ensureFarmerAccess } from '../../lib/farmerAuth'
 import { useLanguage } from '@/app/context/LanguageContext'
 import LanguageToggle from '@/app/components/LanguageToggle'
+import LoginHandshakeModal from '@/app/components/LoginHandshakeModal'
+import { showToast } from '../components/Toast'
 
 export default function Login() {
   const router = useRouter()
   const { t, locale } = useLanguage()
+
+  const videoRef = useRef(null)
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [handshakeData, setHandshakeData] = useState(null)
+
+  // Forgot Password Modal States
+  const [showForgotModal, setShowForgotModal] = useState(false)
+  const [forgotEmail, setForgotEmail] = useState('')
+  const [forgotLoading, setForgotLoading] = useState(false)
+  const [forgotFeedback, setForgotFeedback] = useState(null)
 
   // Banned Farmer Appeal States
   const [bannedUser, setBannedUser] = useState(null)
@@ -83,6 +94,53 @@ export default function Login() {
   }, [router])
 
   useEffect(() => {
+    const v = videoRef.current
+    if (v) {
+      v.defaultMuted = true
+      v.muted = true
+      v.playsInline = true
+
+      // Explicitly ensure fresh cache-busted src and trigger load for seamless transitions
+      if (!v.src || !v.src.includes('/login-bg.mp4')) {
+        v.src = '/login-bg.mp4?v=2'
+      }
+      try {
+        v.load()
+      } catch (e) {}
+
+      const attemptPlay = () => {
+        if (v && v.paused) {
+          const playPromise = v.play()
+          if (playPromise !== undefined) {
+            playPromise.catch((err) => {
+              console.warn('Video autoplay notice:', err)
+            })
+          }
+        }
+      }
+
+      attemptPlay()
+      v.addEventListener('loadeddata', attemptPlay, { once: true })
+      v.addEventListener('canplay', attemptPlay, { once: true })
+
+      const resumeOnInteraction = () => {
+        attemptPlay()
+        window.removeEventListener('click', resumeOnInteraction)
+        window.removeEventListener('touchstart', resumeOnInteraction)
+      }
+      window.addEventListener('click', resumeOnInteraction, { once: true })
+      window.addEventListener('touchstart', resumeOnInteraction, { once: true })
+
+      return () => {
+        v.removeEventListener('loadeddata', attemptPlay)
+        v.removeEventListener('canplay', attemptPlay)
+        window.removeEventListener('click', resumeOnInteraction)
+        window.removeEventListener('touchstart', resumeOnInteraction)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     let interval = null
     if (isRecording) {
       interval = setInterval(() => {
@@ -118,6 +176,64 @@ export default function Login() {
       alert(t('auth.resendFailed', { msg: resendErr.message }))
     } else {
       alert(t('auth.resendSuccess'))
+    }
+  }
+
+  function handleOpenForgotModal() {
+    setForgotEmail(email.trim() || '')
+    setForgotFeedback(null)
+    setShowForgotModal(true)
+  }
+
+  async function handleSendForgotEmail(e) {
+    e.preventDefault()
+    setForgotFeedback(null)
+
+    const targetEmail = forgotEmail.trim()
+    if (!targetEmail) {
+      const err = t('auth.enterEmailForResend') || 'Please enter your email'
+      setForgotFeedback({ text: err, isError: true })
+      showToast(err, 'error')
+      return
+    }
+
+    setForgotLoading(true)
+
+    try {
+      const redirectTo = typeof window !== 'undefined'
+        ? `${window.location.origin}/reset-password`
+        : 'http://localhost:3000/reset-password'
+
+      const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
+        redirectTo,
+      })
+
+      if (error) {
+        const isRateLimit =
+          error.status === 429 ||
+          error.message?.toLowerCase().includes('rate limit') ||
+          error.message?.toLowerCase().includes('over_email_send_rate_limit')
+
+        const displayError = isRateLimit
+          ? t('auth.rateLimitErr')
+          : error.message
+
+        setForgotFeedback({ text: displayError, isError: true })
+        showToast(displayError, 'error', 6000)
+        setForgotLoading(false)
+        return
+      }
+
+      const successMsg = t('auth.resetLinkSentToEmail', { email: targetEmail }) || t('auth.resetLinkSent')
+      setForgotFeedback({ text: successMsg, isError: false })
+      showToast(successMsg, 'success', 6000)
+    } catch (err) {
+      console.error('Forgot password exception:', err)
+      const errText = err.message || 'Failed to send reset link'
+      setForgotFeedback({ text: errText, isError: true })
+      showToast(errText, 'error')
+    } finally {
+      setForgotLoading(false)
     }
   }
 
@@ -167,15 +283,22 @@ export default function Login() {
     setPassword('')
     setLoading(false)
 
-    if (effectiveProfile.role === 'farmer' || user.user_metadata?.role === 'farmer') {
-      router.push('/farmer')
-    } else if (effectiveProfile.role === 'admin') {
-      router.push('/admin')
-    } else if (effectiveProfile.role === 'customer') {
-      router.push('/customer')
-    } else {
-      router.push('/farmer')
-    }
+    // Trigger celebratory Handshake animation between Tamil farmer and customer
+    setHandshakeData({
+      role: effectiveProfile.role,
+      name: effectiveProfile.full_name || '',
+      destination:
+        effectiveProfile.role === 'admin'
+          ? '/admin'
+          : effectiveProfile.role === 'farmer' || user.user_metadata?.role === 'farmer'
+          ? '/farmer'
+          : '/', // As requested: Customer automatically navigates to home page after animation
+    })
+  }
+
+  function handleHandshakeComplete() {
+    const dest = handshakeData?.destination || '/'
+    router.push(dest)
   }
 
   async function startRecording() {
@@ -477,26 +600,47 @@ export default function Login() {
   // STANDARD LOGIN VIEW
   // ==========================================
   return (
-    <main className="min-h-screen bg-[#f7f8f5] flex justify-center items-center p-4 sm:p-8 font-sans relative">
-      <div className="w-full max-w-md bg-white p-6 sm:p-8 rounded-2xl border border-gray-200 shadow-lg">
+    <main className="min-h-screen flex justify-center items-center p-4 sm:p-8 font-sans relative overflow-hidden bg-[#0a170e]">
+      {/* 1. RICH DARK AGRICULTURAL BACKDROP (PREVENTS ANY WHITE/GREY BLINK) */}
+      <div className="fixed inset-0 bg-gradient-to-b from-[#0e2314] via-[#09170e] to-[#040805] z-0 pointer-events-none" />
+
+      {/* 2. BACKGROUND VIDEO (FULL-SCREEN AUTO-LOOPING) */}
+      <video
+        ref={videoRef}
+        src="/login-bg.mp4?v=2"
+        autoPlay
+        loop
+        muted
+        playsInline
+        preload="auto"
+        className="fixed inset-0 w-full h-full object-cover z-0 pointer-events-none"
+      >
+        <source src="/login-bg.mp4?v=2" type="video/mp4" />
+      </video>
+
+      {/* 3. SUBTLE OVERLAY FOR CONTRAST & LEGIBILITY */}
+      <div className="fixed inset-0 bg-black/20 z-0 pointer-events-none" />
+
+      {/* 4. ULTRA-TRANSPARENT GLASS CARD (SEE-THROUGH VIDEO) */}
+      <div className="w-full max-w-md bg-black/20 backdrop-blur-[2px] p-6 sm:p-8 rounded-3xl border border-white/25 shadow-[0_8px_32px_0_rgba(0,0,0,0.5)] relative z-10 transition-all duration-300 text-white">
         <div className="flex justify-end mb-4">
-          <LanguageToggle variant="compact" />
+          <LanguageToggle variant="dark" />
         </div>
 
-        <div className="text-center text-xl sm:text-2xl font-bold text-green-800 mb-6">
+        <div className="text-center text-xl sm:text-2xl font-bold text-emerald-300 mb-6 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
           🌾 {t('brand')}
         </div>
 
-        <h1 className="text-center text-2xl sm:text-3xl font-semibold text-gray-800 mb-2">
+        <h1 className="text-center text-2xl sm:text-3xl font-extrabold text-white mb-2 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]">
           {t('auth.welcomeBack')}
         </h1>
 
-        <p className="text-center text-gray-500 mb-8">
+        <p className="text-center text-white font-medium mb-8 text-sm drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
           {t('auth.loginSubtitle')}
         </p>
 
         <form onSubmit={handleLogin}>
-          <label className="block text-sm font-semibold text-gray-700 mb-2 mt-4">
+          <label className="block text-sm font-bold text-white mb-2 mt-4 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
             {t('auth.emailLabel')}
           </label>
 
@@ -506,10 +650,11 @@ export default function Login() {
             onChange={(e) => setEmail(e.target.value)}
             placeholder={t('auth.emailPlaceholder')}
             required
-            className="w-full p-3 border border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-600"
+            style={{ color: '#111827', backgroundColor: '#ffffff' }}
+            className="w-full p-3.5 bg-white text-gray-900 placeholder:text-gray-400 border border-gray-300 focus:border-emerald-500 rounded-xl text-base outline-none focus:ring-4 focus:ring-emerald-500/30 shadow-md font-medium transition-all"
           />
 
-          <label className="block text-sm font-semibold text-gray-700 mb-2 mt-4">
+          <label className="block text-sm font-bold text-white mb-2 mt-4 drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
             {t('auth.passwordLabel')}
           </label>
 
@@ -520,13 +665,14 @@ export default function Login() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder={t('auth.passwordPlaceholder')}
               required
-              className="w-full h-12 px-3.5 pr-11 border border-gray-300 rounded-lg text-base focus:outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent bg-white"
+              style={{ color: '#111827', backgroundColor: '#ffffff' }}
+              className="w-full h-12 px-3.5 pr-11 bg-white text-gray-900 placeholder:text-gray-400 border border-gray-300 focus:border-emerald-500 rounded-xl text-base outline-none focus:ring-4 focus:ring-emerald-500/30 shadow-md font-medium transition-all"
             />
 
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="eye-toggle-btn absolute inset-y-0 right-0 pr-3.5 flex items-center justify-center cursor-pointer bg-transparent border-0 outline-none text-gray-400 hover:text-green-800 transition-colors z-10"
+              className="eye-toggle-btn absolute inset-y-0 right-0 pr-3.5 flex items-center justify-center cursor-pointer bg-transparent border-0 outline-none text-gray-500 hover:text-emerald-700 transition-colors z-20"
               style={{ top: 0, bottom: 0, right: 0, transform: 'none' }}
               aria-label={showPassword ? t('auth.hidePassword') : t('auth.showPassword')}
               tabIndex={-1}
@@ -534,7 +680,7 @@ export default function Login() {
               {showPassword ? (
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="w-5 h-5 text-green-700"
+                  className="w-5 h-5 text-emerald-700"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -549,7 +695,7 @@ export default function Login() {
               ) : (
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="w-5 h-5 text-gray-400 hover:text-gray-600"
+                  className="w-5 h-5 text-gray-500 hover:text-gray-700"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -571,25 +717,26 @@ export default function Login() {
           </div>
 
           <p className="text-right mt-2 mb-1 text-sm">
-            <a
-              href="/forgot-password"
-              className="text-green-800 font-semibold hover:underline"
+            <button
+              type="button"
+              onClick={handleOpenForgotModal}
+              className="text-emerald-300 hover:text-emerald-200 font-bold hover:underline bg-transparent border-0 p-0 cursor-pointer text-sm drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]"
             >
               {t('auth.forgotPasswordLink')}
-            </a>
+            </button>
           </p>
 
           <button
             type="submit"
             disabled={loading}
-            className="w-full p-3 mt-5 rounded-lg bg-green-800 text-white text-base font-semibold hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full p-3.5 mt-5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-base font-bold shadow-lg shadow-emerald-950/40 transition-all active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             {loading ? t('auth.loggingIn') : t('auth.loginBtn')}
           </button>
         </form>
 
         {message && (
-          <p className="mt-5 text-center text-sm text-green-800 font-medium">
+          <p className="mt-5 p-3 rounded-xl bg-red-500/80 backdrop-blur-sm text-white text-center text-sm font-semibold border border-red-400/50">
             {message}
           </p>
         )}
@@ -600,23 +747,143 @@ export default function Login() {
               type="button"
               onClick={handleResendConfirmation}
               disabled={resending}
-              className="px-4 py-2 bg-green-100 text-green-800 rounded-lg text-sm font-semibold hover:bg-green-200 transition-colors cursor-pointer disabled:opacity-50"
+              className="px-4 py-2 bg-white/20 text-white rounded-lg text-sm font-semibold hover:bg-white/30 transition-colors cursor-pointer disabled:opacity-50 border border-white/30 backdrop-blur-sm"
             >
               {resending ? t('auth.sendingEmail') : `✉️ ${t('auth.resendConfirmationBtn')}`}
             </button>
           </div>
         )}
 
-        <p className="text-center mt-6 text-sm text-gray-500">
+        <p className="text-center mt-6 text-sm text-white font-medium drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
           {t('auth.noAccount')}{' '}
           <a
             href="/register"
-            className="text-green-800 font-semibold hover:underline"
+            className="text-emerald-300 hover:text-emerald-200 font-bold hover:underline drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]"
           >
             {t('auth.createAccountLink')}
           </a>
         </p>
       </div>
+
+      {/* 3. CELEBRATORY HANDSHAKE MODAL WITH AUTOMATIC SCROLL UP ON SUCCESS */}
+      <LoginHandshakeModal
+        isOpen={Boolean(handshakeData)}
+        role={handshakeData?.role}
+        userName={handshakeData?.name}
+        locale={locale}
+        onComplete={handleHandshakeComplete}
+      />
+
+      {/* 4. FORGOT PASSWORD MODAL */}
+      {showForgotModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !forgotLoading) {
+              setShowForgotModal(false)
+            }
+          }}
+        >
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-green-100 relative">
+            {/* Close Button */}
+            <button
+              type="button"
+              disabled={forgotLoading}
+              onClick={() => setShowForgotModal(false)}
+              className="absolute top-4 right-4 w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 hover:text-gray-800 flex items-center justify-center transition-colors cursor-pointer text-sm font-bold"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+
+            <div className="text-center mb-5">
+              <div className="w-14 h-14 bg-green-100 text-green-800 rounded-2xl flex items-center justify-center text-2xl mx-auto mb-3 shadow-xs">
+                🌾
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-800 m-0">
+                {t('auth.forgotModalTitle')}
+              </h2>
+              <p className="text-gray-500 text-xs sm:text-sm mt-1 mb-0 leading-relaxed">
+                {t('auth.forgotModalDesc')}
+              </p>
+            </div>
+
+            {forgotFeedback?.isError === false ? (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-5 text-center space-y-3">
+                <div className="text-4xl animate-bounce">📬</div>
+                <h3 className="text-base sm:text-lg font-bold text-emerald-900 m-0">
+                  {t('auth.resetLinkSent')}
+                </h3>
+                <p className="text-xs sm:text-sm text-emerald-800 leading-relaxed m-0">
+                  {forgotFeedback.text}
+                </p>
+                <div className="text-[11px] text-gray-600 bg-white/80 p-3 rounded-xl border border-emerald-100 leading-relaxed text-left">
+                  💡 <strong>Tip:</strong> If you don&apos;t see the email within 1-2 minutes, check your <strong>Spam / Promotions</strong> folder. Click the secure link inside the email to choose a new password.
+                </div>
+                <div className="flex flex-col gap-2 pt-2">
+                  <a
+                    href="https://mail.google.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full py-2.5 px-4 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-bold transition-colors inline-block text-center shadow-xs"
+                  >
+                    📬 {t('auth.openGmail')}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotModal(false)}
+                    className="w-full py-2 px-4 border border-gray-300 text-gray-700 rounded-xl text-xs font-semibold hover:bg-gray-50 transition-colors cursor-pointer"
+                  >
+                    {t('auth.close')}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={handleSendForgotEmail} className="space-y-4">
+                <div>
+                  <label className="block text-xs sm:text-sm font-bold text-gray-700 mb-1.5">
+                    {t('auth.emailLabel')} *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder={t('auth.emailPlaceholder')}
+                    style={{ color: '#111827', backgroundColor: '#ffffff' }}
+                    className="w-full p-3 bg-white text-gray-900 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-green-600 focus:border-transparent transition-all"
+                  />
+                </div>
+
+                {forgotFeedback?.isError && (
+                  <div className="p-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl font-medium">
+                    {forgotFeedback.text}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={forgotLoading}
+                  className="w-full py-3 px-4 rounded-xl bg-green-800 text-white font-bold text-sm hover:bg-green-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed shadow-md cursor-pointer"
+                >
+                  {forgotLoading ? t('auth.sending') : `✉️ ${t('auth.sendResetLink')}`}
+                </button>
+
+                <div className="text-center pt-2">
+                  <a
+                    href={`/forgot-password${forgotEmail ? `?email=${encodeURIComponent(forgotEmail)}` : ''}`}
+                    className="text-xs text-gray-500 hover:text-green-800 font-medium underline"
+                  >
+                    {t('auth.openFullForgotPage')}
+                  </a>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   )
 }

@@ -79,9 +79,15 @@ export default function RefundContent() {
           <section>
             <h2 className="text-xl font-bold text-gray-900 mb-3">{t('refund.s4Title')}</h2>
             <p className="mb-3">{t('refund.s4Intro')}</p>
-            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm">
-              <strong className="text-gray-900">{t('refund.s4Bold')}</strong>{' '}
-              <span>{t('refund.s4Text')}</span>
+            <div className="space-y-3">
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm">
+                <strong className="text-gray-900 block sm:inline mb-1 sm:mb-0">{t('refund.s4GatewayBold')}</strong>{' '}
+                <span>{t('refund.s4GatewayText')}</span>
+              </div>
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-sm">
+                <strong className="text-gray-900 block sm:inline mb-1 sm:mb-0">{t('refund.s4Bold')}</strong>{' '}
+                <span>{t('refund.s4Text')}</span>
+              </div>
             </div>
           </section>
 
