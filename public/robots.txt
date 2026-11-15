@@ -1,0 +1,19 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin/*
+Disallow: /farmer
+Disallow: /farmer/*
+Disallow: /customer
+Disallow: /customer/*
+Disallow: /login
+Disallow: /register
+Disallow: /forgot-password
+Disallow: /reset-password
+Disallow: /auth/*
+Disallow: /cart
+Disallow: /checkout
+Disallow: /orders
+Disallow: /orders/*
+
+Sitemap: https://uzhavarmarket.netlify.app/sitemap.xml
