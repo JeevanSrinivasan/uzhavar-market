@@ -20,14 +20,42 @@ export default function Checkout() {
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    const savedCart =
-      JSON.parse(localStorage.getItem('cart')) || []
+    async function checkUserAndCart() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        const guestCart = JSON.parse(localStorage.getItem('cart') || '[]')
 
-    setCart(savedCart)
+        if (user) {
+          if (guestCart.length > 0) {
+            const userKey = `uzhavar_cart_${user.id}`
+            const userCart = JSON.parse(localStorage.getItem(userKey) || '[]')
 
-    if (savedCart.length === 0) {
-      router.push('/cart')
+            guestCart.forEach((gItem) => {
+              const idx = userCart.findIndex((u) => u.id === gItem.id)
+              if (idx > -1) {
+                userCart[idx].quantity = (Number(userCart[idx].quantity) || 1) + (Number(gItem.quantity) || 1)
+              } else {
+                userCart.push(gItem)
+              }
+            })
+            localStorage.setItem(userKey, JSON.stringify(userCart))
+            localStorage.removeItem('cart')
+            window.dispatchEvent(new Event('cart-updated'))
+          }
+          router.replace('/customer/checkout')
+          return
+        }
+
+        setCart(guestCart)
+
+        if (guestCart.length === 0) {
+          router.push('/cart')
+        }
+      } catch (err) {
+        console.error('Checkout check error:', err)
+      }
     }
+    checkUserAndCart()
   }, [router])
 
   const totalAmount = cart.reduce(
@@ -197,7 +225,29 @@ export default function Checkout() {
         return
       }
 
+      // Deduct stock for each purchased item
+      for (const item of cart) {
+        try {
+          const { data: prod } = await supabase
+            .from('products')
+            .select('stock_quantity')
+            .eq('id', item.id)
+            .single()
+
+          if (prod && prod.stock_quantity !== null && prod.stock_quantity !== undefined) {
+            const newStock = Math.max(0, Number(prod.stock_quantity) - Number(item.quantity || 1))
+            await supabase
+              .from('products')
+              .update({ stock_quantity: newStock })
+              .eq('id', item.id)
+          }
+        } catch (stockErr) {
+          console.error('Failed to deduct stock for product:', item.id, stockErr)
+        }
+      }
+
       localStorage.removeItem('cart')
+      window.dispatchEvent(new Event('cart-updated'))
       setCart([])
 
       alert(`${t('orderSuccess.title')}\nOrder ID: ${order.id}`)

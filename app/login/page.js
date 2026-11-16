@@ -202,7 +202,7 @@ export default function Login() {
     try {
       const redirectTo = typeof window !== 'undefined'
         ? `${window.location.origin}/reset-password`
-        : 'http://localhost:3000/reset-password'
+        : 'https://uzhavarmarket.netlify.app/reset-password'
 
       const { error } = await supabase.auth.resetPasswordForEmail(targetEmail, {
         redirectTo,

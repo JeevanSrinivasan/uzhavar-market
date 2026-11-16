@@ -75,6 +75,7 @@ export default function WishlistPage() {
     }
 
     localStorage.setItem(cartKey, JSON.stringify(cart));
+    window.dispatchEvent(new Event('cart-updated'));
     alert(t("wishlist.addedAlert", { name: product.name }));
     removeFromWishlist(product.id);
   };

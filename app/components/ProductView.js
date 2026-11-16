@@ -70,15 +70,21 @@ export default function ProductView({
   const imagesList = product?.images?.length > 0 ? product.images : (product?.image_url ? [product.image_url] : []);
 
   useEffect(() => {
-    if (userId) {
-      const cartKey = `uzhavar_cart_${userId}`;
+    const updateCount = () => {
       try {
+        const cartKey = userId ? `uzhavar_cart_${userId}` : 'cart';
         const cart = JSON.parse(localStorage.getItem(cartKey) || "[]");
         let count = 0;
         cart.forEach(item => count += (item.quantity || 1));
         setCartCount(count);
       } catch (e) {}
+    };
 
+    updateCount();
+    window.addEventListener('storage', updateCount);
+    window.addEventListener('cart-updated', updateCount);
+
+    if (userId) {
       const wishlistKey = `uzhavar_wishlist_${userId}`;
       try {
         const wishlist = JSON.parse(localStorage.getItem(wishlistKey) || "[]");
@@ -87,6 +93,11 @@ export default function ProductView({
         }
       } catch (e) {}
     }
+
+    return () => {
+      window.removeEventListener('storage', updateCount);
+      window.removeEventListener('cart-updated', updateCount);
+    };
   }, [userId, product?.id]);
 
   const decreaseQty = () => { if (quantity > minQty) setQuantity(q => q - 1); };
@@ -186,7 +197,7 @@ export default function ProductView({
             <button className="relative p-1 hover:bg-white/10 rounded-full cursor-pointer" onClick={() => router.push(userId ? '/customer/wishlist' : '/login')}>
               <Icons.Heart />
             </button>
-            <button className="relative p-1 hover:bg-white/10 rounded-full cursor-pointer" onClick={() => router.push(userId ? '/customer/cart' : '/login')}>
+            <button className="relative p-1 hover:bg-white/10 rounded-full cursor-pointer" onClick={() => router.push(userId ? '/customer/cart' : '/cart')}>
               <Icons.Cart />
               {cartCount > 0 && (
                 <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] w-4 h-4 flex items-center justify-center rounded-full font-bold">

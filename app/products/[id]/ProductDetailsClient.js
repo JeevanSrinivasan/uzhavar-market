@@ -120,6 +120,7 @@ export default function ProductDetailsClient() {
       ];
     }
     localStorage.setItem(cartKey, JSON.stringify(updatedCart));
+    window.dispatchEvent(new Event('cart-updated'));
     alert(`${t("home.addedToCartAlert")} 🛒`);
   }
 

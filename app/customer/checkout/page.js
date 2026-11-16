@@ -304,7 +304,29 @@ export default function CheckoutPage() {
         if (itemsError) throw itemsError;
       }
 
+      // Deduct stock for each purchased item
+      for (const item of cart) {
+        try {
+          const { data: prod } = await supabase
+            .from("products")
+            .select("stock_quantity")
+            .eq("id", item.id)
+            .single();
+
+          if (prod && prod.stock_quantity !== null && prod.stock_quantity !== undefined) {
+            const newStock = Math.max(0, Number(prod.stock_quantity) - Number(item.quantity || 1));
+            await supabase
+              .from("products")
+              .update({ stock_quantity: newStock })
+              .eq("id", item.id);
+          }
+        } catch (stockErr) {
+          console.error("Failed to deduct stock for product:", item.id, stockErr);
+        }
+      }
+
       localStorage.removeItem(`uzhavar_cart_${user.id}`);
+      window.dispatchEvent(new Event('cart-updated'));
       router.push("/customer/orders");
     } catch (error) {
       console.error("Checkout Error:", error);

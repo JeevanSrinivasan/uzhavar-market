@@ -251,6 +251,7 @@ export default function Home() {
     }
 
     localStorage.setItem(cartKey, JSON.stringify(updatedCart));
+    window.dispatchEvent(new Event('cart-updated'));
     if (buyNow) {
       router.push("/customer/checkout");
     } else {
@@ -568,7 +569,7 @@ export default function Home() {
         </button>
 
         <button
-          onClick={() => router.push("/customer/cart")}
+          onClick={() => router.push(user ? "/customer/cart" : "/cart")}
           className="flex flex-col items-center justify-center flex-1 py-1 px-1 text-gray-600 dark:text-slate-300 hover:text-green-800 dark:hover:text-emerald-400 active:scale-90 transition-transform"
         >
           <span className="text-xl leading-none">🛒</span>

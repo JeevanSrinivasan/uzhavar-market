@@ -162,6 +162,7 @@ export default function CustomerProductDetailsPage() {
       }
 
       localStorage.setItem(cartKey, JSON.stringify(cart));
+      window.dispatchEvent(new Event('cart-updated'));
       alert(`${t("home.addedToCartAlert")} 🛒`);
     } catch (error) {
       console.error("Add to cart error:", error);

@@ -110,6 +110,33 @@ export default function CustomerOrderDetailsPage() {
         return;
       }
 
+      // Restore stock for cancelled order items
+      try {
+        const itemsToRestore = (items && items.length > 0) ? items : (await supabase
+          .from("order_items")
+          .select("product_id, quantity")
+          .eq("order_id", order.id)).data || [];
+
+        for (const itm of itemsToRestore) {
+          if (!itm.product_id) continue;
+          const { data: prod } = await supabase
+            .from("products")
+            .select("stock_quantity")
+            .eq("id", itm.product_id)
+            .single();
+
+          if (prod && prod.stock_quantity !== null && prod.stock_quantity !== undefined) {
+            const restoredStock = Number(prod.stock_quantity) + Number(itm.quantity || 1);
+            await supabase
+              .from("products")
+              .update({ stock_quantity: restoredStock })
+              .eq("id", itm.product_id);
+          }
+        }
+      } catch (stockErr) {
+        console.error("Failed to restore stock on cancel:", stockErr);
+      }
+
       setOrder(updatedOrder);
       setActionMessage(
         t("orders.cancelSuccessNotice", {

@@ -27,13 +27,35 @@ export default function CustomerCartPage() {
 
         setUser(user);
 
+        let userCart = [];
         const savedCart = localStorage.getItem(`uzhavar_cart_${user.id}`);
-
         if (savedCart) {
-          setCart(JSON.parse(savedCart));
-        } else {
-          setCart([]);
+          try {
+            userCart = JSON.parse(savedCart) || [];
+          } catch (e) {}
         }
+
+        const guestCartStr = localStorage.getItem('cart');
+        if (guestCartStr) {
+          try {
+            const guestCart = JSON.parse(guestCartStr) || [];
+            if (Array.isArray(guestCart) && guestCart.length > 0) {
+              guestCart.forEach((gItem) => {
+                const idx = userCart.findIndex((u) => u.id === gItem.id);
+                if (idx > -1) {
+                  userCart[idx].quantity = (Number(userCart[idx].quantity) || 1) + (Number(gItem.quantity) || 1);
+                } else {
+                  userCart.push(gItem);
+                }
+              });
+              localStorage.setItem(`uzhavar_cart_${user.id}`, JSON.stringify(userCart));
+              localStorage.removeItem('cart');
+              window.dispatchEvent(new Event('cart-updated'));
+            }
+          } catch (e) {}
+        }
+
+        setCart(userCart);
       } catch (error) {
         console.error("Cart loading error:", error);
       } finally {
@@ -51,6 +73,7 @@ export default function CustomerCartPage() {
       `uzhavar_cart_${user.id}`,
       JSON.stringify(cart)
     );
+    window.dispatchEvent(new Event('cart-updated'));
   }, [cart, user]);
 
   const updateQuantity = (index, newQuantity) => {

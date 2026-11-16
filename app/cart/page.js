@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
 import { useLanguage } from '@/app/context/LanguageContext'
 import LanguageToggle from '@/app/components/LanguageToggle'
 import Footer from '@/app/components/Footer'
@@ -13,11 +14,40 @@ export default function Cart() {
   const [cart, setCart] = useState([])
 
   useEffect(() => {
-    const savedCart =
-      JSON.parse(localStorage.getItem('cart')) || []
+    async function initCart() {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        const guestCart = JSON.parse(localStorage.getItem('cart') || '[]')
 
-    setCart(savedCart)
-  }, [])
+        if (user) {
+          if (guestCart.length > 0) {
+            const userKey = `uzhavar_cart_${user.id}`
+            const userCart = JSON.parse(localStorage.getItem(userKey) || '[]')
+
+            guestCart.forEach((gItem) => {
+              const idx = userCart.findIndex((u) => u.id === gItem.id)
+              if (idx > -1) {
+                userCart[idx].quantity = (Number(userCart[idx].quantity) || 1) + (Number(gItem.quantity) || 1)
+              } else {
+                userCart.push(gItem)
+              }
+            })
+            localStorage.setItem(userKey, JSON.stringify(userCart))
+            localStorage.removeItem('cart')
+            window.dispatchEvent(new Event('cart-updated'))
+          }
+          router.replace('/customer/cart')
+          return
+        }
+
+        setCart(guestCart)
+      } catch (err) {
+        console.error('Cart init error:', err)
+        setCart(JSON.parse(localStorage.getItem('cart') || '[]'))
+      }
+    }
+    initCart()
+  }, [router])
 
   function updateCart(updatedCart) {
     setCart(updatedCart)
@@ -26,6 +56,7 @@ export default function Cart() {
       'cart',
       JSON.stringify(updatedCart)
     )
+    window.dispatchEvent(new Event('cart-updated'))
   }
 
   function increaseQuantity(id) {
