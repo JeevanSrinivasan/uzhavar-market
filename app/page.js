@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { supabase } from "../lib/supabase";
 import { ensureFarmerAccess } from "../lib/farmerAuth";
+import Navbar from "./components/Navbar";
 import HeroBanner from "./components/HeroBanner";
 import Footer from "./components/Footer";
 import LanguageToggle from "./components/LanguageToggle";
@@ -199,20 +200,6 @@ export default function Home() {
       : products.filter((product) => product.category_id === selectedCategoryId);
 
   // =========================
-  // LOGOUT
-  // =========================
-  async function handleLogout() {
-    await supabase.auth.signOut();
-    setUser(null);
-    setRole(null);
-    if (typeof window !== "undefined") {
-      window.location.href = "/login";
-    } else {
-      router.push("/login");
-    }
-  }
-
-  // =========================
   // ADD TO CART & BUY NOW
   // =========================
   function addProductToUserCart(product, { buyNow = false } = {}) {
@@ -264,122 +251,7 @@ export default function Home() {
       {/* =========================
           NAVBAR
       ========================= */}
-      <nav className="min-h-[58px] sm:min-h-[70px] bg-white flex items-center justify-between px-3 sm:px-[7%] py-2 sm:py-0 border-b border-gray-200 sticky top-0 z-50 shadow-xs gap-2">
-        <div
-          className="text-[15px] sm:text-2xl font-bold cursor-pointer whitespace-nowrap text-green-950 flex items-center gap-1.5 shrink-0"
-          onClick={() => router.push("/")}
-        >
-          <span>🌾</span>
-          <span>{t("brand")}</span>
-        </div>
-
-        {/* MOBILE TOP CONTROLS (sm:hidden) */}
-        <div className="flex sm:hidden items-center gap-1.5 shrink-0">
-          <LanguageToggle variant="compact" />
-
-          {!authLoading && user && role === "farmer" && (
-            <button
-              onClick={() => router.push("/farmer")}
-              className="px-2 py-1.5 rounded-lg bg-green-50 text-green-800 text-xs font-bold border border-green-200 hover:bg-green-100 transition-colors whitespace-nowrap active:scale-95 flex items-center gap-1 shadow-2xs"
-            >
-              <span>🌾</span>
-              <span>{t("nav.dashboard")}</span>
-            </button>
-          )}
-
-          {!authLoading && user && role === "admin" && (
-            <button
-              onClick={() => router.push("/admin")}
-              className="px-2 py-1.5 rounded-lg bg-green-50 text-green-800 text-xs font-bold border border-green-200 hover:bg-green-100 transition-colors whitespace-nowrap active:scale-95 flex items-center gap-1 shadow-2xs"
-            >
-              <span>⚙️</span>
-              <span>{t("nav.admin")}</span>
-            </button>
-          )}
-
-          {!authLoading && user && (
-            <button
-              onClick={handleLogout}
-              className="px-2.5 py-1.5 rounded-lg bg-green-800 text-white text-xs font-bold hover:bg-green-700 transition-colors whitespace-nowrap active:scale-95 shadow-xs"
-            >
-              {t("nav.logout")}
-            </button>
-          )}
-
-          {!authLoading && !user && (
-            <button
-              onClick={() => router.push("/login")}
-              className="px-2.5 py-1.5 rounded-lg bg-green-800 text-white text-xs font-bold hover:bg-green-700 transition-colors whitespace-nowrap active:scale-95 shadow-xs"
-            >
-              {t("nav.login")}
-            </button>
-          )}
-        </div>
-
-        {/* DESKTOP NAVIGATION (hidden sm:flex) */}
-        <div className="hidden sm:flex items-center gap-4 lg:gap-5 flex-wrap justify-end">
-          <Link href="/" className="hover:text-green-700 transition-colors font-medium whitespace-nowrap">{t("nav.home")}</Link>
-          <a href="#categories" className="hover:text-green-700 transition-colors font-medium whitespace-nowrap">{t("nav.categories")}</a>
-          <a href="#products" className="hover:text-green-700 transition-colors font-medium whitespace-nowrap">{t("nav.products")}</a>
-          <Link href="/about" className="hover:text-green-700 transition-colors font-medium whitespace-nowrap">{t("nav.aboutUs")}</Link>
-          <Link href="/contact" className="hover:text-green-700 transition-colors font-medium whitespace-nowrap">{t("nav.contact")}</Link>
-
-          <LanguageToggle />
-
-          {!authLoading && user && (role === "customer" || role === "farmer") && (
-            <>
-              <button
-                onClick={() => router.push("/customer/cart")}
-                className="hover:text-green-700 transition-colors font-medium whitespace-nowrap"
-              >
-                🛒 {t("nav.myCart")}
-              </button>
-              <button
-                onClick={() => router.push("/customer/orders")}
-                className="hover:text-green-700 transition-colors font-medium whitespace-nowrap"
-              >
-                📦 {t("nav.myOrders")}
-              </button>
-            </>
-          )}
-
-          {!authLoading && user && role === "farmer" && (
-            <button
-              onClick={() => router.push("/farmer")}
-              className="hover:text-green-700 transition-colors font-medium whitespace-nowrap"
-            >
-              🌾 {t("nav.farmerDashboard")}
-            </button>
-          )}
-
-          {!authLoading && user && role === "admin" && (
-            <button
-              onClick={() => router.push("/admin")}
-              className="hover:text-green-700 transition-colors font-medium whitespace-nowrap"
-            >
-              ⚙️ {t("nav.adminDashboard")}
-            </button>
-          )}
-
-          {!authLoading && !user && (
-            <button
-              onClick={() => router.push("/login")}
-              className="px-4 py-2 rounded-lg bg-green-800 text-white hover:bg-green-700 transition-colors font-medium whitespace-nowrap"
-            >
-              {t("nav.login")}
-            </button>
-          )}
-
-          {!authLoading && user && (
-            <button
-              onClick={handleLogout}
-              className="px-4 py-2 rounded-lg bg-green-800 text-white hover:bg-green-700 transition-colors font-medium whitespace-nowrap"
-            >
-              {t("nav.logout")}
-            </button>
-          )}
-        </div>
-      </nav>
+      <Navbar activePage="home" />
 
       {/* =========================
           ANIMATED HERO BANNER

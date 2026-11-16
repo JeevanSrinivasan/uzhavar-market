@@ -93,7 +93,7 @@ export default function Navbar({ activePage = '' }) {
         </Link>
 
         {/* DESKTOP NAV LINKS */}
-        <nav className="hidden md:flex items-center gap-5 lg:gap-6 text-sm font-semibold text-gray-700">
+        <nav className="hidden md:flex items-center gap-3.5 lg:gap-6 text-xs lg:text-sm font-semibold text-gray-700">
           <Link 
             href="/" 
             className={`transition-colors hover:text-green-700 whitespace-nowrap ${activePage === 'home' ? 'text-green-800 font-bold border-b-2 border-green-700 pb-0.5' : ''}`}
