@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { detectTNMarketRate, saveApprovedMarketPrice, cleanProductDescription } from '@/lib/pricing'
 
 export default function AdminProducts() {
   const router = useRouter()
@@ -29,6 +30,7 @@ export default function AdminProducts() {
 
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [manualRateModal, setManualRateModal] = useState(null)
 
   useEffect(() => {
     loadProducts()
@@ -318,73 +320,141 @@ export default function AdminProducts() {
   }
 
   async function updateApproval(product, status) {
-    let confirmationMessage = ''
-
-    if (status === 'active') {
-      confirmationMessage =
-        `Approve "${product.name}"?`
-    }
-
     if (status === 'rejected') {
-      confirmationMessage =
-        `Reject "${product.name}"?`
-    }
+      const confirmed = window.confirm(`Reject "${product.name}"?`)
+      if (!confirmed) return
 
-    if (
-      !window.confirm(confirmationMessage)
-    ) {
-      return
-    }
+      setUpdatingId(product.id)
+      setError('')
+      setMessage('')
 
-    setUpdatingId(product.id)
-    setError('')
-    setMessage('')
+      const updateData = {
+        approval_status: 'rejected',
+        status: 'inactive',
+      }
 
-    const updateData = {
-      approval_status: status,
-      status:
-        status === 'active'
-          ? 'active'
-          : 'inactive',
-    }
-
-    const { error: updateError } =
-      await supabase
+      const { error: updateError } = await supabase
         .from('products')
         .update(updateData)
         .eq('id', product.id)
 
+      if (updateError) {
+        console.log('APPROVAL UPDATE ERROR:', updateError)
+        setError('Unable to update product approval.')
+        setUpdatingId(null)
+        return
+      }
+
+      setProducts((currentProducts) =>
+        currentProducts.map((item) =>
+          item.id === product.id ? { ...item, ...updateData } : item
+        )
+      )
+      setUpdatingId(null)
+      setMessage(`${product.name} rejected.`)
+      return
+    }
+
+    if (status === 'active') {
+      const farmerPrice = Number(product.price) || 0
+      const commission = Number(product.commission_amount) || 0
+      const customerPrice = farmerPrice + commission
+
+      // 1. Auto-detect highest market rate in Tamil Nadu
+      const detectedRate = detectTNMarketRate(product.name, product.unit, customerPrice)
+
+      // CASE 1: Auto-detection successful
+      if (detectedRate && detectedRate > customerPrice) {
+        const savings = detectedRate - customerPrice
+        const discountPercent = Math.round((savings / detectedRate) * 100)
+
+        const confirmed = window.confirm(
+          `Approve "${product.name}"?\n\n` +
+          `• Farmer Price: ₹${farmerPrice.toFixed(2)} / ${product.unit}\n` +
+          `• Commission: ₹${commission.toFixed(2)} / ${product.unit}\n` +
+          `• Customer Selling Price: ₹${customerPrice.toFixed(2)} / ${product.unit}\n\n` +
+          `✓ TN Highest Market Rate Auto-Detected: ₹${detectedRate.toFixed(2)} / ${product.unit}\n` +
+          `Strikethrough Display: ~~₹${detectedRate.toFixed(2)}~~ ➔ ₹${customerPrice.toFixed(2)} (${discountPercent}% OFF · Customer saves ₹${savings.toFixed(2)})`
+        )
+
+        if (!confirmed) return
+
+        await executeProductApproval(product, commission, detectedRate)
+        return
+      }
+
+      // CASE 2: Auto-detection failed (Rare case) -> DO NOT APPROVE AUTOMATICALLY!
+      // Open modal popup for admin to manually input the verified TN highest market rate
+      setManualRateModal({
+        product,
+        commission,
+        farmerPrice,
+        customerPrice,
+        manualRate: '',
+        error: '',
+      })
+    }
+  }
+
+  async function executeProductApproval(product, commission, marketRate) {
+    setUpdatingId(product.id)
+    setError('')
+    setMessage('Approving product with TN market rate...')
+
+    let updatePayload = {
+      commission_amount: commission,
+      market_price: Number(marketRate),
+      approval_status: 'active',
+      status: 'active',
+    }
+
+    let { error: updateError } = await supabase
+      .from('products')
+      .update(updatePayload)
+      .eq('id', product.id)
+
+    // Fallback if market_price column is not yet in Supabase schema
+    if (updateError && updateError.message && updateError.message.includes('market_price')) {
+      updatePayload = {
+        commission_amount: commission,
+        approval_status: 'active',
+        status: 'active',
+      }
+      const fallbackRes = await supabase
+        .from('products')
+        .update(updatePayload)
+        .eq('id', product.id)
+      updateError = fallbackRes.error
+    }
+
     if (updateError) {
-      console.log(
-        'APPROVAL UPDATE ERROR:',
-        updateError
-      )
-
-      setError(
-        'Unable to update product approval.'
-      )
-
+      console.log('APPROVAL UPDATE ERROR:', updateError)
+      setError('Unable to approve product.')
       setUpdatingId(null)
       return
     }
+
+    // Save to local registry so customer storefront immediately uses this approved rate
+    saveApprovedMarketPrice(product.id, Number(marketRate))
 
     setProducts((currentProducts) =>
       currentProducts.map((item) =>
         item.id === product.id
           ? {
               ...item,
-              ...updateData,
+              commission_amount: commission,
+              market_price: Number(marketRate),
+              approval_status: 'active',
+              status: 'active',
             }
           : item
       )
     )
 
+    setManualRateModal(null)
     setUpdatingId(null)
-
     setMessage(
-      status === 'active'
-        ? `${product.name} approved successfully.`
-        : `${product.name} rejected.`
+      `✓ "${product.name}" approved successfully with TN Highest Market Rate ₹${Number(marketRate).toFixed(2)}!`
     )
   }
 
@@ -801,7 +871,7 @@ export default function AdminProducts() {
                     <p
                       className="m-0 mb-[15px] text-gray-500 text-[13px] md:text-[14px] leading-relaxed min-h-[40px] line-clamp-2"
                     >
-                      {product.description ||
+                      {cleanProductDescription(product.description) ||
                         'No description'}
                     </p>
 
@@ -1091,6 +1161,219 @@ export default function AdminProducts() {
           </div>
         )}
       </section>
+
+      {/* =====================================================
+          MANUAL TN HIGHEST MARKET RATE MODAL (RARE CASE)
+      ===================================================== */}
+      {manualRateModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '16px',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
+          <div
+            style={{
+              backgroundColor: '#ffffff',
+              borderRadius: '16px',
+              padding: '24px',
+              maxWidth: '520px',
+              width: '100%',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
+              border: '1px solid #e2e8f0',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+              <span style={{ fontSize: '28px' }}>⚠️</span>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold', color: '#1e293b' }}>
+                  TN Highest Market Rate Required
+                </h3>
+                <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#b45309', fontWeight: 600 }}>
+                  Auto-detection could not find a verified Tamil Nadu market rate for this product.
+                </p>
+              </div>
+            </div>
+
+            <div
+              style={{
+                background: '#fffbeb',
+                border: '1px solid #fde68a',
+                borderRadius: '10px',
+                padding: '12px 14px',
+                color: '#92400e',
+                fontSize: '13px',
+                lineHeight: 1.5,
+                marginBottom: '14px',
+              }}
+            >
+              In order to show the <strong>strikethrough rate (~~MRP~~)</strong> and <strong>discount offer (% OFF)</strong> to customers, this product <strong>cannot be approved</strong> without entering the highest retail rate in Tamil Nadu.
+            </div>
+
+            {/* Product Summary */}
+            <div
+              style={{
+                background: '#f8fafc',
+                border: '1px solid #e2e8f0',
+                borderRadius: '10px',
+                padding: '14px',
+                marginBottom: '16px',
+                fontSize: '13px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: '#64748b' }}>Product:</span>
+                <strong style={{ color: '#0f172a' }}>{manualRateModal.product.name}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: '#64748b' }}>Farmer Price:</span>
+                <span>₹{manualRateModal.farmerPrice.toFixed(2)} / {manualRateModal.product.unit}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: '#64748b' }}>Admin Commission:</span>
+                <span style={{ color: '#15803d', fontWeight: 600 }}>+₹{manualRateModal.commission.toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
+                <strong style={{ color: '#0f172a' }}>Customer Selling Price:</strong>
+                <strong style={{ color: '#166534', fontSize: '15px' }}>
+                  ₹{manualRateModal.customerPrice.toFixed(2)} / {manualRateModal.product.unit}
+                </strong>
+              </div>
+            </div>
+
+            {/* Manual Rate Input */}
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#1e293b', marginBottom: '6px' }}>
+              Enter TN Highest Retail Market Rate (₹) *
+              <span style={{ fontWeight: 'normal', color: '#64748b', fontSize: '11px' }}> (per {manualRateModal.product.unit})</span>
+            </label>
+            <div style={{ position: 'relative', marginBottom: '14px' }}>
+              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontWeight: 'bold', color: '#64748b' }}>₹</span>
+              <input
+                type="number"
+                min={manualRateModal.customerPrice + 1}
+                step="1"
+                placeholder={`E.g. ${(manualRateModal.customerPrice * 1.3).toFixed(0)}`}
+                value={manualRateModal.manualRate}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setManualRateModal((prev) => ({
+                    ...prev,
+                    manualRate: val,
+                    error: '',
+                  }))
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px 10px 28px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '15px',
+                  fontWeight: 'bold',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            {/* Live Auto-Calculated Offer Preview */}
+            {Number(manualRateModal.manualRate) > manualRateModal.customerPrice && (
+              <div
+                style={{
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  borderRadius: '10px',
+                  padding: '12px 14px',
+                  marginBottom: '14px',
+                }}
+              >
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#166534', marginBottom: '4px' }}>
+                  ✓ Customer Strikethrough & Offer Preview:
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: '18px', color: '#0f172a' }}>
+                    ₹{manualRateModal.customerPrice.toFixed(2)}
+                  </strong>
+                  <span style={{ fontSize: '14px', color: '#94a3b8', textDecoration: 'line-through' }}>
+                    ₹{Number(manualRateModal.manualRate).toFixed(2)}
+                  </span>
+                  <span style={{ background: '#166534', color: '#fff', fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '12px' }}>
+                    {Math.round(((Number(manualRateModal.manualRate) - manualRateModal.customerPrice) / Number(manualRateModal.manualRate)) * 100)}% OFF
+                  </span>
+                </div>
+                <div style={{ fontSize: '11px', color: '#15803d', marginTop: '4px', fontWeight: 600 }}>
+                  Direct Savings: ₹{(Number(manualRateModal.manualRate) - manualRateModal.customerPrice).toFixed(2)} / {manualRateModal.product.unit}
+                </div>
+              </div>
+            )}
+
+            {manualRateModal.manualRate && Number(manualRateModal.manualRate) <= manualRateModal.customerPrice && (
+              <p style={{ fontSize: '12px', color: '#dc2626', margin: '0 0 12px', fontWeight: 600 }}>
+                ⚠️ Rate must be higher than the customer selling price (₹{manualRateModal.customerPrice.toFixed(2)}) to show an offer discount.
+              </p>
+            )}
+
+            {manualRateModal.error && (
+              <p style={{ fontSize: '12px', color: '#dc2626', margin: '0 0 12px' }}>{manualRateModal.error}</p>
+            )}
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+              <button
+                onClick={() => setManualRateModal(null)}
+                style={{
+                  padding: '9px 16px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  background: '#f8fafc',
+                  color: '#475569',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel (Do not approve)
+              </button>
+              <button
+                onClick={() => {
+                  const entered = Number(manualRateModal.manualRate)
+                  if (!entered || !Number.isFinite(entered) || entered <= manualRateModal.customerPrice) {
+                    setManualRateModal((prev) => ({
+                      ...prev,
+                      error: `Please enter a valid rate greater than ₹${manualRateModal.customerPrice.toFixed(2)}.`,
+                    }))
+                    return
+                  }
+                  executeProductApproval(manualRateModal.product, manualRateModal.commission, entered)
+                }}
+                disabled={!manualRateModal.manualRate || Number(manualRateModal.manualRate) <= manualRateModal.customerPrice}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: '#166534',
+                  color: '#ffffff',
+                  fontWeight: 'bold',
+                  fontSize: '13px',
+                  cursor: !manualRateModal.manualRate || Number(manualRateModal.manualRate) <= manualRateModal.customerPrice ? 'not-allowed' : 'pointer',
+                  opacity: !manualRateModal.manualRate || Number(manualRateModal.manualRate) <= manualRateModal.customerPrice ? 0.6 : 1,
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                }}
+              >
+                ✓ Confirm & Approve Product
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

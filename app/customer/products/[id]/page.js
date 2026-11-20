@@ -73,7 +73,7 @@ export default function CustomerProductDetailsPage() {
     return farmerPrice + commission;
   }
 
-  async function handleAddToCart(quantityToAdd) {
+  async function handleAddToCart(quantityToAdd, deliveryOptions = null) {
     if (!product || addingToCart) return;
 
     const stock = Number(product.stock_quantity || 0);
@@ -109,6 +109,9 @@ export default function CustomerProductDetailsPage() {
         cart = [];
       }
 
+      const minFreeQty = Number(product.min_free_delivery_qty || 1);
+      const baseDeliveryPrice = Number(product.delivery_price || 0);
+
       const existingIndex = cart.findIndex(
         (item) => String(item.id) === String(product.id)
       );
@@ -122,13 +125,18 @@ export default function CustomerProductDetailsPage() {
           return;
         }
 
+        const computedDelivery = deliveryOptions && deliveryOptions.deliveryFee !== undefined
+          ? deliveryOptions.deliveryFee
+          : (newQuantity >= minFreeQty ? 0 : baseDeliveryPrice);
+
         cart[existingIndex] = {
           ...cart[existingIndex],
           quantity: newQuantity,
           stock_quantity: stock,
           price: Number(product.price || 0),
           commission_amount: Number(product.commission_amount || 0),
-          delivery_price: Number(product.delivery_price || 0),
+          delivery_price: computedDelivery,
+          min_free_delivery_qty: minFreeQty,
           unit: product.unit || "unit",
           unit_count: Number(product.unit_count || 1),
           image_url: product.image_url || null,
@@ -140,13 +148,18 @@ export default function CustomerProductDetailsPage() {
           category_name: product.categories?.name || "General",
         };
       } else {
+        const computedDelivery = deliveryOptions && deliveryOptions.deliveryFee !== undefined
+          ? deliveryOptions.deliveryFee
+          : (quantityToAdd >= minFreeQty ? 0 : baseDeliveryPrice);
+
         cart.push({
           id: product.id,
           name: product.name,
           description: product.description || "",
           price: Number(product.price || 0),
           commission_amount: Number(product.commission_amount || 0),
-          delivery_price: Number(product.delivery_price || 0),
+          delivery_price: computedDelivery,
+          min_free_delivery_qty: minFreeQty,
           unit: product.unit || "unit",
           unit_count: Number(product.unit_count || 1),
           image_url: product.image_url || null,

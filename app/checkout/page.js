@@ -58,11 +58,16 @@ export default function Checkout() {
     checkUserAndCart()
   }, [router])
 
-  const totalAmount = cart.reduce(
-    (total, item) =>
-      total + Number(item.price) * item.quantity,
-    0
-  )
+  const totalAmount = cart.reduce((total, item) => {
+    const minFree = Number(item.min_free_delivery_qty) || 1
+    const delivery = Number(item.quantity) >= minFree ? 0 : Number(item.delivery_price || 0)
+    return total + (Number(item.price) * item.quantity) + delivery
+  }, 0)
+
+  const totalDelivery = cart.reduce((total, item) => {
+    const minFree = Number(item.min_free_delivery_qty) || 1
+    return total + (Number(item.quantity) >= minFree ? 0 : Number(item.delivery_price || 0))
+  }, 0)
 
   async function handlePlaceOrder(e) {
     e.preventDefault()
@@ -161,7 +166,9 @@ export default function Checkout() {
         const farmerPrice = Number(product.price)
         const commissionAmount = Number(product.commission_amount || 0)
         const customerPrice = farmerPrice + commissionAmount
-        const itemTotal = customerPrice * quantity
+        const minFreeQty = Number(product.min_free_delivery_qty || cartItem.min_free_delivery_qty || 1)
+        const deliveryFee = quantity >= minFreeQty ? 0 : Number(product.delivery_price || cartItem.delivery_price || 0)
+        const itemTotal = (customerPrice * quantity) + deliveryFee
 
         calculatedTotal += itemTotal
 
@@ -399,6 +406,13 @@ export default function Checkout() {
                   </strong>
                 </div>
               ))}
+            </div>
+
+            <div className="flex justify-between py-2 text-gray-600 text-sm">
+              <span>{t('checkout.delivery')}</span>
+              <span className={totalDelivery === 0 ? 'text-green-700 font-semibold' : 'text-gray-900 font-medium'}>
+                {totalDelivery === 0 ? t('checkout.free') : `+₹${totalDelivery.toFixed(2)}`}
+              </span>
             </div>
 
             <div className="my-5 border-t border-gray-200"></div>

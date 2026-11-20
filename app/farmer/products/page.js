@@ -6,6 +6,7 @@ import { supabase } from '../../../lib/supabase'
 import { ensureFarmerAccess } from '../../../lib/farmerAuth'
 import { useLanguage } from '@/app/context/LanguageContext'
 import LanguageToggle from '@/app/components/LanguageToggle'
+import { cleanProductDescription } from '@/lib/pricing'
 
 export default function MyProducts() {
   const router = useRouter()
@@ -382,7 +383,7 @@ export default function MyProducts() {
                       </div>
 
                       <div className="hidden sm:block mb-4 text-[13px] text-gray-500 line-clamp-2 flex-1">
-                        {product.description || t('farmer.noDescAvailable')}
+                        {cleanProductDescription(product.description) || t('farmer.noDescAvailable')}
                       </div>
 
                       <div className="bg-gray-50 border border-gray-200 rounded-lg sm:rounded-xl p-2 sm:p-3 mb-2 sm:mb-4">

@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../../lib/supabase'
 import { showToast } from '../../components/Toast'
 import { ensureFarmerAccess } from '../../../lib/farmerAuth'
+import { formatProductDescriptionWithDelivery, cleanProductDescription } from '@/lib/pricing'
 
 export default function AddProduct() {
   const router = useRouter()
@@ -19,7 +20,7 @@ export default function AddProduct() {
   const [description, setDescription] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [stock, setStock] = useState('')
-  const [variants, setVariants] = useState([{ price: '', unitCount: '1', unit: 'kg', deliveryPrice: '' }])
+  const [variants, setVariants] = useState([{ price: '', unitCount: '1', unit: 'kg', deliveryPrice: '', minFreeDeliveryQty: '1' }])
   const [images, setImages] = useState([])
 
   const [message, setMessage] = useState('')
@@ -27,12 +28,15 @@ export default function AddProduct() {
 
   const handleVariantChange = (index, field, value) => {
     const newVariants = [...variants]
-    newVariants[index][field] = value
+    newVariants[index] = {
+      ...newVariants[index],
+      [field]: value ?? '',
+    }
     setVariants(newVariants)
   }
 
   const addVariant = () => {
-    setVariants([...variants, { price: '', unitCount: '1', unit: 'kg', deliveryPrice: '' }])
+    setVariants([...variants, { price: '', unitCount: '1', unit: 'kg', deliveryPrice: '', minFreeDeliveryQty: '1' }])
   }
 
   const removeVariant = (index) => {
@@ -86,9 +90,9 @@ export default function AddProduct() {
   function handleImagesChange(e) {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
-    const combined = [...images, ...files].slice(0, 4)
-    if (images.length + files.length > 4) {
-      alert('You can upload a maximum of 4 images.')
+    const combined = [...images, ...files].slice(0, 2)
+    if (images.length + files.length > 2) {
+      alert('You can upload a maximum of 2 images.')
     }
     setImages(combined)
     e.target.value = ''
@@ -156,15 +160,22 @@ export default function AddProduct() {
       const isBag = v.unit.includes('bag');
       const finalUnitCount = isBag ? 1 : Number(v.unitCount);
       const displayName = variants.length > 1 ? `${name} - ${isBag ? '' : finalUnitCount + ' '}${v.unit}` : name;
+      const minQty = Math.max(1, Number(v.minFreeDeliveryQty || 1));
+      const delPrice = Number(v.deliveryPrice || 0);
+      const taggedDescription = formatProductDescriptionWithDelivery(description, {
+        minFreeQty: minQty,
+        deliveryPrice: delPrice,
+      });
+
       return {
         farmer_id: user.id,
         category_id: categoryId,
         name: displayName,
-        description: description,
+        description: taggedDescription,
         price: Number(v.price),
         unit: v.unit,
         unit_count: finalUnitCount,
-        delivery_price: Number(v.deliveryPrice || 0),
+        delivery_price: delPrice,
         stock_quantity: Number(stock),
         image_url: imageUrls.length > 0 ? imageUrls[0] : null,
         images: imageUrls,
@@ -194,7 +205,7 @@ export default function AddProduct() {
     setDescription('')
     setCategoryId('')
     setStock('')
-    setVariants([{ price: '', unitCount: '1', unit: 'kg', deliveryPrice: '' }])
+    setVariants([{ price: '', unitCount: '1', unit: 'kg', deliveryPrice: '', minFreeDeliveryQty: '1' }])
     setImages([])
 
     const fileInput = document.getElementById('product-image')
@@ -328,12 +339,12 @@ export default function AddProduct() {
                     {t('farmer.variantNum', { n: index + 1 })}
                   </div>
                   
-                  <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
                     <div>
                       <label className="block mb-2 text-sm font-semibold text-gray-700">{t('farmer.priceStarLabel')}</label>
                       <input
                         type="number"
-                        value={v.price}
+                        value={v.price ?? ''}
                         onChange={(e) => handleVariantChange(index, 'price', e.target.value)}
                         placeholder={t('common.price')}
                         min="0"
@@ -343,11 +354,11 @@ export default function AddProduct() {
                       />
                     </div>
                     
-                    {!v.unit.includes('bag') && <div>
+                    {!v.unit?.includes('bag') && <div>
                       <label className="block mb-2 text-sm font-semibold text-gray-700">{t('farmer.unitCountLabel')}</label>
                       <input
                         type="number"
-                        value={v.unitCount}
+                        value={v.unitCount ?? '1'}
                         onChange={(e) => handleVariantChange(index, 'unitCount', e.target.value)}
                         placeholder="e.g. 1"
                         min="0"
@@ -360,7 +371,7 @@ export default function AddProduct() {
                     <div>
                       <label className="block mb-2 text-sm font-semibold text-gray-700">{t('farmer.unitLabel')}</label>
                       <select
-                        value={v.unit}
+                        value={v.unit ?? 'kg'}
                         onChange={(e) => handleVariantChange(index, 'unit', e.target.value)}
                         className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-green-800"
                         required
@@ -385,15 +396,36 @@ export default function AddProduct() {
                       <label className="block mb-2 text-sm font-semibold text-gray-700">{t('farmer.deliveryPriceLabel')}</label>
                       <input
                         type="number"
-                        value={v.deliveryPrice}
+                        value={v.deliveryPrice ?? ''}
                         onChange={(e) => handleVariantChange(index, 'deliveryPrice', e.target.value)}
-                        placeholder="e.g. 20"
+                        placeholder="e.g. 30"
                         min="0"
                         step="0.01"
                         className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-green-800"
                         required
                       />
                     </div>
+
+                    <div>
+                      <label className="block mb-2 text-sm font-semibold text-gray-700">
+                        {t('farmer.minFreeDeliveryQtyLabel')}
+                      </label>
+                      <input
+                        type="number"
+                        value={v.minFreeDeliveryQty ?? '1'}
+                        onChange={(e) => handleVariantChange(index, 'minFreeDeliveryQty', e.target.value)}
+                        placeholder="e.g. 5"
+                        min="1"
+                        step="1"
+                        className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-green-800"
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-3 p-2.5 bg-green-50 rounded-lg border border-green-200 text-xs text-green-800 flex items-center gap-2">
+                    <span className="text-sm">🚚</span>
+                    <span>{t('farmer.minFreeDeliveryQtyHint')}</span>
                   </div>
                 </div>
               ))}
@@ -405,7 +437,7 @@ export default function AddProduct() {
             </label>
             
             {images.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+              <div className="grid grid-cols-2 gap-3 mb-3">
                 {images.map((img, idx) => (
                   <div key={idx} className="relative rounded-lg overflow-hidden border border-gray-200 aspect-square bg-gray-50 flex items-center justify-center">
                     <img
@@ -429,7 +461,7 @@ export default function AddProduct() {
               </div>
             )}
 
-            {images.length < 4 && (
+            {images.length < 2 && (
               <input
                 id="product-image"
                 type="file"

@@ -10,6 +10,7 @@ import HeroBanner from "./components/HeroBanner";
 import Footer from "./components/Footer";
 import LanguageToggle from "./components/LanguageToggle";
 import { useLanguage } from "./context/LanguageContext";
+import { getProductPricing, cleanProductDescription } from "@/lib/pricing";
 
 function readCartFromStorage(cartKey) {
   try {
@@ -317,7 +318,9 @@ export default function Home() {
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-6">
-            {filteredProducts.map((product) => (
+            {filteredProducts.map((product) => {
+              const pricing = getProductPricing(product);
+              return (
               <div
                 key={product.id}
                 className="bg-white rounded-xl overflow-hidden border border-gray-200 flex flex-col hover:shadow-lg transition-shadow cursor-pointer group"
@@ -333,13 +336,18 @@ export default function Home() {
                   ) : (
                     <span className="group-hover:scale-110 transition-transform duration-300">🌾</span>
                   )}
+                  {pricing.discountPercent > 0 && (
+                    <span className="absolute top-2 left-2 bg-emerald-600 text-white text-[10px] sm:text-xs font-extrabold px-2 py-0.5 rounded-full shadow-md tracking-tight z-10">
+                      {pricing.discountPercent}% {t("common.off")}
+                    </span>
+                  )}
                 </div>
 
                 <div className="p-3 sm:p-5 flex-1 flex flex-col">
                   <p className="text-[10px] sm:text-xs uppercase text-green-700 font-semibold mb-1">{t("home.farmProduct")}</p>
                   <h3 className="text-sm sm:text-xl font-bold text-gray-900 mb-1 sm:mb-2 line-clamp-2">{product.name}</h3>
                   <p className="hidden sm:block text-sm text-gray-600 line-clamp-2 min-h-[40px] mb-2">
-                    {product.description}
+                    {cleanProductDescription(product.description)}
                   </p>
 
                   <div className="flex flex-col gap-0.5 text-[10px] sm:text-xs text-gray-600 dark:text-slate-300 mb-2 sm:mb-3">
@@ -360,13 +368,20 @@ export default function Home() {
                   </div>
 
                   <div className="mt-auto">
-                    <div className="flex items-end gap-1 mb-1 sm:mb-2">
+                    <div className="flex items-baseline gap-1.5 sm:gap-2 mb-1 sm:mb-2 flex-wrap">
                       <strong className="text-base sm:text-2xl font-bold text-gray-900 dark:text-white">
-                        ₹
-                        {(
-                          Number(product.price || 0) + Number(product.commission_amount || 0)
-                        ).toFixed(2)}
+                        ₹{pricing.sellingPrice.toFixed(2)}
                       </strong>
+                      {pricing.discountPercent > 0 && (
+                        <>
+                          <span className="text-xs sm:text-sm text-gray-400 dark:text-slate-500 line-through font-medium">
+                            ₹{pricing.marketPrice.toFixed(2)}
+                          </span>
+                          <span className="text-[10px] sm:text-xs font-bold text-emerald-700 bg-emerald-50 dark:bg-emerald-950/60 dark:text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                            {pricing.discountPercent}% {t("common.off")}
+                          </span>
+                        </>
+                      )}
                       <span className="text-[10px] sm:text-sm text-gray-500 dark:text-slate-400 pb-0.5">/ {tu(product.unit)}</span>
                     </div>
                     <p className="text-[10px] sm:text-sm text-gray-500 dark:text-slate-400 mb-2 sm:mb-4">
@@ -399,7 +414,7 @@ export default function Home() {
                   </div>
                 </div>
               </div>
-            ))}
+            )})}
           </div>
         )}
       </section>

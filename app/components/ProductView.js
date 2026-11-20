@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useLanguage } from "@/app/context/LanguageContext";
 import LanguageToggle from "@/app/components/LanguageToggle";
+import { getProductPricing, getDeliveryDetails, cleanProductDescription } from "@/lib/pricing";
 
 const Icons = {
   Back: () => <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>,
@@ -62,6 +63,12 @@ export default function ProductView({
   const minQty = isOrganicComplex ? 50 : 1;
   const [quantity, setQuantity] = useState(minQty);
   
+  const pricing = getProductPricing({
+    ...product,
+    price: price !== undefined ? price : product?.price,
+    commission_amount: 0,
+  });
+
   const [cartCount, setCartCount] = useState(0);
   const [descExpanded, setDescExpanded] = useState(false);
 
@@ -100,17 +107,58 @@ export default function ProductView({
     };
   }, [userId, product?.id]);
 
+  const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState(null); // 'buyNow' | 'addToCart'
+
+  const deliveryInfo = getDeliveryDetails(product, quantity);
+
   const decreaseQty = () => { if (quantity > minQty) setQuantity(q => q - 1); };
   const increaseQty = () => { if (quantity < stock) setQuantity(q => q + 1); };
 
   const handleAdd = () => {
-    onAddToCart(quantity);
+    if (deliveryInfo.hasDeliveryFeeBelowMin && quantity < deliveryInfo.minFreeQty) {
+      setPendingAction('addToCart');
+      setDeliveryModalOpen(true);
+      return;
+    }
+    onAddToCart(quantity, { deliveryFee: 0, minFreeQty: deliveryInfo.minFreeQty });
     setCartCount(prev => prev + quantity);
   };
 
   const handleBuyNow = () => {
-    onAddToCart(quantity);
-    router.push(userId ? '/customer/cart' : '/login');
+    if (deliveryInfo.hasDeliveryFeeBelowMin && quantity < deliveryInfo.minFreeQty) {
+      setPendingAction('buyNow');
+      setDeliveryModalOpen(true);
+      return;
+    }
+    onAddToCart(quantity, { deliveryFee: 0, minFreeQty: deliveryInfo.minFreeQty });
+    router.push(userId ? '/customer/checkout' : '/login');
+  };
+
+  const handleChooseOption1 = () => {
+    const targetQty = deliveryInfo.minFreeQty;
+    setQuantity(targetQty);
+    onAddToCart(targetQty, {
+      deliveryFee: 0,
+      minFreeQty: deliveryInfo.minFreeQty,
+    });
+    setCartCount(prev => prev + targetQty);
+    setDeliveryModalOpen(false);
+    if (pendingAction === 'buyNow') {
+      router.push(userId ? '/customer/checkout' : '/login');
+    }
+  };
+
+  const handleChooseOption2 = () => {
+    onAddToCart(quantity, {
+      deliveryFee: deliveryInfo.deliveryPrice,
+      minFreeQty: deliveryInfo.minFreeQty,
+    });
+    setCartCount(prev => prev + quantity);
+    setDeliveryModalOpen(false);
+    if (pendingAction === 'buyNow') {
+      router.push(userId ? '/customer/checkout' : '/login');
+    }
   };
 
   const handleShare = async () => {
@@ -252,6 +300,11 @@ export default function ProductView({
             <span className="absolute top-3 left-3 bg-[#166534] text-white text-xs px-2.5 py-1 rounded-full flex items-center gap-1 font-semibold">
               <Icons.Leaf className="w-3 h-3" /> {t('productView.organic')}
             </span>
+            {pricing.discountPercent > 0 && (
+              <span className="absolute top-3 left-28 bg-emerald-600 text-white text-xs px-2.5 py-1 rounded-full font-bold shadow-md">
+                {pricing.discountPercent}% {t('common.off')}
+              </span>
+            )}
             <div className="absolute top-3 right-3 flex flex-col gap-2">
               <button onClick={toggleWishlist} className="bg-white p-2.5 rounded-full shadow-sm text-gray-700 hover:text-red-500 cursor-pointer transition-colors">
                 <Icons.Heart filled={isLiked} className={isLiked ? "fill-red-500 text-red-500" : ""} />
@@ -317,14 +370,77 @@ export default function ProductView({
              <span className="text-sm text-gray-500">{t('productView.reviewsCount', { count: reviews.length })}</span>
           </div>
 
-          <div className="flex items-end gap-1 mb-1.5">
-            <span className="text-3xl font-bold text-[#166534]">₹{Number(price || 0).toFixed(2)}</span>
+          <div className="flex items-baseline gap-2.5 mb-1 flex-wrap">
+            <span className="text-3xl sm:text-4xl font-bold text-[#166534]">
+              ₹{Number(price || pricing.sellingPrice || 0).toFixed(2)}
+            </span>
+            {pricing.discountPercent > 0 && (
+              <>
+                <span className="text-base sm:text-lg text-gray-400 line-through font-medium">
+                  {t('common.mrp')}: ₹{pricing.marketPrice.toFixed(2)}
+                </span>
+                <span className="text-xs sm:text-sm font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-300">
+                  {pricing.discountPercent}% {t('common.off')}
+                </span>
+              </>
+            )}
             <span className="text-gray-500 font-medium mb-1.5">/ {translatedUnit}</span>
           </div>
+
+          {pricing.discountPercent > 0 && (
+            <div className="text-xs sm:text-sm text-emerald-800 font-medium mb-3 flex items-center gap-1.5 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 w-fit">
+              <span>🏷️</span>
+              <span className="font-bold">
+                {t('common.directSavings', {
+                  amount: pricing.savingsAmount.toFixed(0),
+                  percent: pricing.discountPercent,
+                })}
+              </span>
+              <span className="text-gray-500 text-xs">
+                ({t('common.marketRateNotice', { amount: pricing.marketPrice.toFixed(0) })})
+              </span>
+            </div>
+          )}
           
-          <div className="text-sm text-[#166534] font-bold mb-5 flex items-center gap-1.5">
+          <div className="text-sm text-[#166534] font-bold mb-4 flex items-center gap-1.5">
             <Icons.Leaf className="w-3.5 h-3.5 fill-current" /> {t('productView.availableWithUnit', { stock, unit: translatedUnit })}
           </div>
+
+          {/* Delivery Status Banner */}
+          {deliveryInfo.deliveryPrice > 0 && (
+            deliveryInfo.isFreeDelivery ? (
+              <div className="bg-green-50 border border-green-200 rounded-xl p-3 mb-4 text-xs sm:text-sm text-green-900 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🎉</span>
+                  <div>
+                    <strong className="block text-green-800">{t('productView.freeDeliveryEligible')}</strong>
+                    <span className="text-xs text-green-700">
+                      {t('productView.freeDeliveryThresholdNotice', { min: deliveryInfo.minFreeQty, unit: translatedUnit })}
+                    </span>
+                  </div>
+                </div>
+                <span className="bg-green-600 text-white font-extrabold text-[11px] px-2.5 py-1 rounded-full uppercase tracking-wider">
+                  FREE
+                </span>
+              </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs sm:text-sm text-amber-900">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2 font-bold text-amber-900">
+                    <span>🚚</span>
+                    <span>{t('productView.deliveryFeeNotice', { fee: deliveryInfo.deliveryPrice, min: deliveryInfo.minFreeQty, unit: translatedUnit })}</span>
+                  </div>
+                  <span className="text-xs font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded">
+                    +₹{deliveryInfo.deliveryPrice}
+                  </span>
+                </div>
+                <p className="text-xs text-amber-800 mt-1 flex items-center gap-1 font-medium">
+                  <span>💡</span>
+                  <span>{t('productView.orderMoreForFree', { count: `${deliveryInfo.itemsNeededForFree} ${translatedUnit}` })}</span>
+                </p>
+              </div>
+            )
+          )}
 
           <div className="flex flex-col gap-3 mb-6">
             <div className="flex gap-3">
@@ -374,7 +490,7 @@ export default function ProductView({
           <div className="mb-6">
             <h3 className="font-bold text-gray-900 mb-2 text-base">{t('productView.descriptionTitle')}</h3>
             <p className={`text-sm text-gray-600 leading-relaxed ${descExpanded ? '' : 'line-clamp-3'}`}>
-              {product.description || t('productView.defaultDesc')}
+              {cleanProductDescription(product.description) || t('productView.defaultDesc')}
             </p>
             {descExpanded && (!product.description || product.description.length < 100) && (
               <ul className="text-sm text-gray-600 mt-2 space-y-1 list-disc pl-4">
@@ -462,6 +578,139 @@ export default function ProductView({
           </div>
         </div>
       </div>
+
+      {/* =====================================================
+          CUSTOMER DELIVERY OPTIONS MODAL (BELOW MIN QTY)
+      ===================================================== */}
+      {deliveryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-5 sm:p-6 shadow-2xl border border-gray-100 relative max-h-[90vh] overflow-y-auto">
+            {/* Close button */}
+            <button
+              onClick={() => setDeliveryModalOpen(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors cursor-pointer text-lg font-bold"
+              title={t('common.close')}
+            >
+              ✕
+            </button>
+
+            {/* Modal Header */}
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-2xl shrink-0">
+                🚚
+              </div>
+              <div className="pr-6">
+                <h3 className="text-lg sm:text-xl font-bold text-gray-900 m-0">
+                  {t('productView.deliveryOptionsModalTitle')}
+                </h3>
+                <p className="text-xs sm:text-sm text-gray-500 m-0 mt-0.5 truncate max-w-[280px] sm:max-w-[340px]">
+                  {product?.name}
+                </p>
+              </div>
+            </div>
+
+            {/* Subtitle / notice */}
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs sm:text-sm text-amber-900 leading-relaxed">
+              <p className="font-semibold m-0">
+                {t('productView.currentSelectionNotice', {
+                  qty: quantity,
+                  min: deliveryInfo.minFreeQty,
+                  unit: translatedUnit,
+                })}
+              </p>
+              <p className="m-0 mt-1 text-xs text-amber-800">
+                {t('productView.deliveryOptionsSubtitle', {
+                  min: deliveryInfo.minFreeQty,
+                  unit: translatedUnit,
+                })}
+              </p>
+            </div>
+
+            {/* Two Options Cards */}
+            <div className="space-y-3.5 mb-5">
+              {/* Option 1: Minimum Quantity - Free Delivery */}
+              <div className="border-2 border-green-600 bg-green-50/70 rounded-xl p-4 transition-all hover:bg-green-50 relative">
+                <span className="absolute -top-2.5 right-4 bg-green-700 text-white text-[10px] font-extrabold uppercase px-2.5 py-0.5 rounded-full tracking-wide shadow-sm">
+                  ★ RECOMMENDED
+                </span>
+                <div className="flex justify-between items-start mb-1.5">
+                  <h4 className="font-bold text-green-900 text-sm sm:text-base m-0">
+                    {t('productView.option1CardTitle')}
+                  </h4>
+                </div>
+                <p className="text-xs text-green-800 mb-3 leading-relaxed">
+                  {t('productView.option1CardDesc', {
+                    min: deliveryInfo.minFreeQty,
+                    unit: translatedUnit,
+                    amount: (price * deliveryInfo.minFreeQty).toFixed(2),
+                  })}
+                </p>
+                <div className="bg-white/95 rounded-lg p-2.5 border border-green-200 mb-3 text-xs flex justify-between items-center">
+                  <div>
+                    <span className="text-gray-600">{deliveryInfo.minFreeQty} {translatedUnit} x ₹{price.toFixed(2)}</span>
+                    <strong className="block text-green-900 text-sm">Total: ₹{(price * deliveryInfo.minFreeQty).toFixed(2)}</strong>
+                  </div>
+                  <span className="bg-green-100 text-green-800 font-bold px-2 py-1 rounded text-[11px]">
+                    {t('productView.option1SavingsBadge', { fee: deliveryInfo.deliveryPrice })}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleChooseOption1}
+                  className="w-full py-2.5 px-4 bg-green-700 hover:bg-green-800 text-white font-bold rounded-lg text-sm transition-colors flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                >
+                  {t('productView.option1SelectBtn', {
+                    min: deliveryInfo.minFreeQty,
+                    unit: translatedUnit,
+                  })}
+                </button>
+              </div>
+
+              {/* Option 2: Current Quantity + Delivery Fee */}
+              <div className="border border-gray-300 bg-gray-50 rounded-xl p-4 transition-all hover:bg-gray-100/80">
+                <h4 className="font-bold text-gray-800 text-sm sm:text-base m-0 mb-1">
+                  {t('productView.option2CardTitle')}
+                </h4>
+                <p className="text-xs text-gray-600 mb-3 leading-relaxed">
+                  {t('productView.option2CardDesc', {
+                    qty: quantity,
+                    unit: translatedUnit,
+                    subtotal: (price * quantity).toFixed(2),
+                    fee: deliveryInfo.deliveryPrice.toFixed(2),
+                    total: (price * quantity + deliveryInfo.deliveryPrice).toFixed(2),
+                  })}
+                </p>
+                <div className="bg-white rounded-lg p-2.5 border border-gray-200 mb-3 text-xs flex justify-between items-center">
+                  <div>
+                    <span className="text-gray-500">{quantity} {translatedUnit} (₹{(price * quantity).toFixed(2)}) + Shipping (₹{deliveryInfo.deliveryPrice.toFixed(2)})</span>
+                    <strong className="block text-gray-900 text-sm">Total: ₹{(price * quantity + deliveryInfo.deliveryPrice).toFixed(2)}</strong>
+                  </div>
+                  <span className="bg-gray-100 text-gray-700 font-semibold px-2 py-1 rounded text-[11px]">
+                    +₹{deliveryInfo.deliveryPrice} Shipping
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleChooseOption2}
+                  className="w-full py-2.5 px-4 bg-gray-800 hover:bg-gray-900 text-white font-bold rounded-lg text-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  {t('productView.option2SelectBtn', { fee: deliveryInfo.deliveryPrice })}
+                </button>
+              </div>
+            </div>
+
+            <div className="text-center">
+              <button
+                type="button"
+                onClick={() => setDeliveryModalOpen(false)}
+                className="text-xs text-gray-500 hover:text-gray-700 font-medium underline cursor-pointer"
+              >
+                {t('common.cancel')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

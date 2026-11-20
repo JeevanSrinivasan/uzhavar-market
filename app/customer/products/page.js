@@ -6,6 +6,7 @@ import { supabase } from "@/lib/supabase";
 import HeroBanner from "@/app/components/HeroBanner";
 import Footer from "@/app/components/Footer";
 import { useLanguage } from "@/app/context/LanguageContext";
+import { getProductPricing, cleanProductDescription } from "@/lib/pricing";
 
 export default function CustomerProductsPage() {
   const router = useRouter();
@@ -188,6 +189,7 @@ export default function CustomerProductsPage() {
                 product.profiles?.full_name ||
                 t("common.localFarmer");
               const place = product.profiles?.district;
+              const pricing = getProductPricing(product);
 
               return (
                 <div
@@ -206,6 +208,11 @@ export default function CustomerProductsPage() {
                     ) : (
                       <div className="group-hover:scale-110 transition-transform duration-300">🌾</div>
                     )}
+                    {pricing.discountPercent > 0 && (
+                      <span className="absolute top-2 left-2 bg-emerald-600 text-white text-[10px] sm:text-xs font-extrabold px-2 py-0.5 rounded-full shadow-md tracking-tight z-10">
+                        {pricing.discountPercent}% {t("common.off")}
+                      </span>
+                    )}
                   </div>
 
                   {/* Product Content */}
@@ -219,7 +226,7 @@ export default function CustomerProductsPage() {
                     </h3>
 
                     <p className="hidden sm:block text-xs sm:text-sm text-gray-600 line-clamp-2 min-h-[40px] mb-2">
-                      {product.description || t("customerProducts.freshFarmProduct")}
+                      {cleanProductDescription(product.description) || t("customerProducts.freshFarmProduct")}
                     </p>
 
                     <div className="flex flex-col gap-0.5 text-[10px] sm:text-xs text-gray-500 mb-2 sm:mb-3">
@@ -228,10 +235,20 @@ export default function CustomerProductsPage() {
                     </div>
 
                     <div className="mt-auto">
-                      <div className="flex items-end gap-1 mb-1 sm:mb-2">
+                      <div className="flex items-baseline gap-1.5 sm:gap-2 mb-1 sm:mb-2 flex-wrap">
                         <strong className="text-base sm:text-xl font-bold text-gray-900">
                           ₹{customerPrice.toFixed(2)}
                         </strong>
+                        {pricing.discountPercent > 0 && (
+                          <>
+                            <span className="text-xs sm:text-sm text-gray-400 line-through font-medium">
+                              ₹{pricing.marketPrice.toFixed(2)}
+                            </span>
+                            <span className="text-[10px] sm:text-xs font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">
+                              {pricing.discountPercent}% {t("common.off")}
+                            </span>
+                          </>
+                        )}
                         <span className="text-[10px] sm:text-xs text-gray-500 pb-0.5">
                           / {product.unit_count || 1} {tu(product.unit || "unit")}
                         </span>

@@ -1,9 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 import { showToast } from '../components/Toast'
+import {
+  detectTNMarketRate,
+  saveApprovedMarketPrice,
+  cleanProductDescription,
+  getDeliveryDetails,
+} from '@/lib/pricing'
 
 export default function AdminDashboard() {
   const router = useRouter()
@@ -34,6 +40,37 @@ export default function AdminDashboard() {
   const [orderSearch, setOrderSearch] = useState('')
   const [paidSettlementSearch, setPaidSettlementSearch] = useState('')
   const [commissionValues, setCommissionValues] = useState({})
+  const [manualRateModal, setManualRateModal] = useState(null)
+  const [pendingProductSearch, setPendingProductSearch] = useState('')
+  const [productFilter, setProductFilter] = useState('all')
+
+  const pendingProducts = useMemo(() => {
+    return products.filter((p) => p.approval_status === 'pending')
+  }, [products])
+
+  const filteredPendingProducts = useMemo(() => {
+    if (!pendingProductSearch.trim()) return pendingProducts
+    const q = pendingProductSearch.toLowerCase()
+    return pendingProducts.filter((p) => {
+      const name = (p.name || '').toLowerCase()
+      const farmer = (p.profiles?.full_name || p.profiles?.farm_name || '').toLowerCase()
+      const category = (p.categories?.name || '').toLowerCase()
+      return name.includes(q) || farmer.includes(q) || category.includes(q)
+    })
+  }, [pendingProducts, pendingProductSearch])
+
+  const displayedProducts = useMemo(() => {
+    if (productFilter === 'pending') {
+      return products.filter((p) => p.approval_status === 'pending')
+    }
+    if (productFilter === 'approved') {
+      return products.filter((p) => p.approval_status === 'active')
+    }
+    if (productFilter === 'rejected') {
+      return products.filter((p) => p.approval_status === 'rejected')
+    }
+    return products
+  }, [products, productFilter])
 
   useEffect(() => {
     if (message && !message.includes('Loading') && !message.includes('Confirming')) {
@@ -728,35 +765,74 @@ async function rejectReview(review) {
     const customerPrice =
       farmerPrice + commission
 
-    const confirmed =
-      window.confirm(
-        `Approve "${product.name}"?\n\n` +
-        `Farmer Price: ₹${farmerPrice.toFixed(2)} / ${product.unit}\n` +
-        `Commission: ₹${commission.toFixed(2)} / ${product.unit}\n` +
-        `Customer Price: ₹${customerPrice.toFixed(2)} / ${product.unit}`
-      )
+    // 1. Auto-detect highest market rate in Tamil Nadu
+    const detectedRate = detectTNMarketRate(product.name, product.unit, customerPrice)
 
-    if (!confirmed) {
+    // CASE 1: Auto-detection successful
+    if (detectedRate && detectedRate > customerPrice) {
+      const savings = detectedRate - customerPrice
+      const discountPercent = Math.round((savings / detectedRate) * 100)
+
+      const confirmed =
+        window.confirm(
+          `Approve "${product.name}"?\n\n` +
+          `• Farmer Price: ₹${farmerPrice.toFixed(2)} / ${product.unit}\n` +
+          `• Commission: ₹${commission.toFixed(2)} / ${product.unit}\n` +
+          `• Customer Selling Price: ₹${customerPrice.toFixed(2)} / ${product.unit}\n\n` +
+          `✓ TN Highest Market Rate Auto-Detected: ₹${detectedRate.toFixed(2)} / ${product.unit}\n` +
+          `Strikethrough Display: ~~₹${detectedRate.toFixed(2)}~~ ➔ ₹${customerPrice.toFixed(2)} (${discountPercent}% OFF · Customer saves ₹${savings.toFixed(2)})`
+        )
+
+      if (!confirmed) {
+        return
+      }
+
+      await executeProductApproval(product, commission, detectedRate)
       return
     }
 
+    // CASE 2: Auto-detection failed (Rare case) -> DO NOT APPROVE AUTOMATICALLY!
+    // Open modal popup for admin to manually input the verified TN highest market rate
+    setManualRateModal({
+      product,
+      commission,
+      farmerPrice,
+      customerPrice,
+      manualRate: '',
+      error: '',
+    })
+  }
+
+  async function executeProductApproval(product, commission, marketRate) {
     setProductMessage(
-      'Approving product...'
+      'Approving product with TN market rate...'
     )
 
-    const {
-      error,
-    } = await supabase
+    let updatePayload = {
+      commission_amount: commission,
+      market_price: Number(marketRate),
+      approval_status: 'active',
+      status: 'active',
+    }
+
+    let { error } = await supabase
       .from('products')
-      .update({
-        commission_amount:
-          commission,
-        approval_status:
-          'active',
-        status:
-          'active',
-      })
+      .update(updatePayload)
       .eq('id', product.id)
+
+    // Fallback if market_price column is not yet in Supabase schema
+    if (error && error.message && error.message.includes('market_price')) {
+      updatePayload = {
+        commission_amount: commission,
+        approval_status: 'active',
+        status: 'active',
+      }
+      const fallbackRes = await supabase
+        .from('products')
+        .update(updatePayload)
+        .eq('id', product.id)
+      error = fallbackRes.error
+    }
 
     if (error) {
       console.log(
@@ -772,6 +848,9 @@ async function rejectReview(review) {
       return
     }
 
+    // Save to local registry so customer storefront immediately uses this approved rate
+    saveApprovedMarketPrice(product.id, Number(marketRate))
+
     setProducts(
       (currentProducts) =>
         currentProducts.map(
@@ -779,12 +858,10 @@ async function rejectReview(review) {
             item.id === product.id
               ? {
                   ...item,
-                  commission_amount:
-                    commission,
-                  approval_status:
-                    'active',
-                  status:
-                    'active',
+                  commission_amount: commission,
+                  market_price: Number(marketRate),
+                  approval_status: 'active',
+                  status: 'active',
                 }
               : item
         )
@@ -802,8 +879,9 @@ async function rejectReview(review) {
       }
     )
 
+    setManualRateModal(null)
     setProductMessage(
-      'Product approved successfully.'
+      `✓ "${product.name}" approved successfully with TN Highest Market Rate ₹${Number(marketRate).toFixed(2)}!`
     )
   }
 
@@ -1947,6 +2025,22 @@ async function rejectReview(review) {
                 <strong className="text-xs sm:text-lg text-green-800 leading-tight">Pending Settlements</strong>
                 <span className="text-[10px] sm:text-sm text-gray-500 leading-snug line-clamp-2">Pay farmers for delivered orders</span>
               </button>
+
+              <button
+                onClick={() => setActiveSection('pending-products')}
+                className="bg-white border border-amber-200 rounded-xl sm:rounded-2xl p-3 sm:p-6 text-left cursor-pointer flex flex-col gap-1 sm:gap-2 hover:shadow-md transition-shadow relative"
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="text-2xl sm:text-3xl mb-0.5 sm:mb-1">⏳</span>
+                  {pendingProducts.length > 0 && (
+                    <span className="text-[10px] sm:text-xs font-bold bg-amber-500 text-white px-2 py-0.5 rounded-full shadow-sm">
+                      {pendingProducts.length} pending
+                    </span>
+                  )}
+                </div>
+                <strong className="text-xs sm:text-lg text-amber-900 leading-tight">Pending Products</strong>
+                <span className="text-[10px] sm:text-sm text-gray-500 leading-snug line-clamp-2">Review & set commission</span>
+              </button>
             </div>
 
             {/* MAIN STATS */}
@@ -1983,6 +2077,36 @@ async function rejectReview(review) {
                   <h3 className="text-base sm:text-2xl m-0 mb-0.5 sm:mb-1 text-gray-800 font-bold">{orders.length}</h3>
                 </div>
                 <p className="m-0 text-green-700 text-[11px] sm:text-sm font-semibold leading-tight">Total Orders →</p>
+              </div>
+
+              {/* PENDING PRODUCTS */}
+              <div 
+                className={`bg-white border rounded-xl sm:rounded-2xl p-3 sm:p-6 shadow-sm cursor-pointer hover:shadow-md transition-all flex flex-col justify-between group ${
+                  pendingProducts.length > 0 
+                    ? 'border-amber-300 bg-amber-50/40 hover:border-amber-500' 
+                    : 'border-gray-200'
+                }`}
+                onClick={() => setActiveSection('pending-products')}
+              >
+                <div>
+                  <div className="text-2xl sm:text-3xl mb-1.5 sm:mb-3 flex items-center justify-between">
+                    <span>⏳</span>
+                    {pendingProducts.length > 0 && (
+                      <span className="text-[10px] sm:text-xs font-bold bg-amber-500 text-white px-2 py-0.5 rounded-full shadow-sm animate-pulse">
+                        {pendingProducts.length} New
+                      </span>
+                    )}
+                  </div>
+                  <h3 className={`text-base sm:text-2xl m-0 mb-0.5 sm:mb-1 font-bold ${
+                    pendingProducts.length > 0 ? 'text-amber-800' : 'text-gray-800'
+                  }`}>
+                    {pendingProducts.length}
+                  </h3>
+                </div>
+                <p className="m-0 font-semibold text-[11px] sm:text-sm leading-tight flex items-center justify-between text-amber-900">
+                  <span>Pending Products</span>
+                  <span className="text-amber-600 group-hover:translate-x-1 transition-transform">→</span>
+                </p>
               </div>
 
               <div className="bg-white border border-gray-200 rounded-xl sm:rounded-2xl p-3 sm:p-6 shadow-sm flex flex-col justify-between">
@@ -2189,6 +2313,315 @@ async function rejectReview(review) {
         )}
 
         {/* =================================================
+            PENDING PRODUCTS APPROVAL SECTION
+        ================================================= */}
+
+        {activeSection === 'pending-products' && (
+          <section className="bg-white p-4 sm:p-7 rounded-2xl mb-10 shadow-sm border border-gray-200">
+            {/* Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-5 border-b border-gray-200 gap-4 mb-6">
+              <div className="flex items-center gap-3 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setActiveSection('dashboard')}
+                  className="py-2 px-3.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 cursor-pointer font-semibold text-sm transition-colors flex items-center gap-1.5"
+                >
+                  ← Back to Dashboard
+                </button>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-900 m-0 flex items-center gap-2">
+                    <span>⏳ Pending Products Approval</span>
+                  </h2>
+                  <span className="text-xs sm:text-sm font-bold bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full border border-amber-300">
+                    {pendingProducts.length} {pendingProducts.length === 1 ? 'Product' : 'Products'} Waiting
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={loadProducts}
+                  className="py-2 px-3.5 rounded-lg border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 text-xs sm:text-sm font-semibold cursor-pointer transition-colors"
+                >
+                  ↻ Refresh
+                </button>
+                <button
+                  onClick={() => setActiveSection('products')}
+                  className="py-2 px-3.5 rounded-lg border border-green-700 bg-green-50 hover:bg-green-100 text-green-800 text-xs sm:text-sm font-semibold cursor-pointer transition-colors"
+                >
+                  📦 All Products
+                </button>
+                <button
+                  onClick={() => router.push('/admin/products')}
+                  className="py-2 px-3.5 rounded-lg bg-green-700 hover:bg-green-800 text-white text-xs sm:text-sm font-semibold cursor-pointer transition-colors"
+                >
+                  Manage Products
+                </button>
+              </div>
+            </div>
+
+            {/* Subtitle / Instructions */}
+            <p className="text-sm text-gray-600 mt-0 mb-4">
+              Review farmer products waiting for admin approval. Enter your commission per unit, verify the Tamil Nadu highest benchmark market rate (MRP), and approve or reject.
+            </p>
+
+            {/* Search Input */}
+            {pendingProducts.length > 0 && (
+              <div className="mb-6">
+                <div className="relative max-w-md">
+                  <input
+                    type="text"
+                    placeholder="Search pending products by product or farmer name..."
+                    value={pendingProductSearch}
+                    onChange={(e) => setPendingProductSearch(e.target.value)}
+                    className="w-full pl-9 pr-8 py-2 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-green-800 focus:border-green-800 bg-white"
+                  />
+                  <span className="absolute left-3 top-2.5 text-gray-400 text-sm">🔍</span>
+                  {pendingProductSearch && (
+                    <button
+                      onClick={() => setPendingProductSearch('')}
+                      className="absolute right-2.5 top-2.5 text-gray-400 hover:text-gray-600 text-xs cursor-pointer font-bold"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Message alert */}
+            {productMessage && (
+              <div className="mb-5 p-3 rounded-xl bg-green-50 border border-green-200 text-green-800 text-sm font-semibold">
+                {productMessage}
+              </div>
+            )}
+
+            {/* Empty State */}
+            {pendingProducts.length === 0 ? (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-8 sm:p-12 text-center">
+                <div className="text-4xl sm:text-5xl mb-3">🎉</div>
+                <h3 className="text-lg sm:text-xl font-bold text-emerald-900 mb-1">
+                  All Products Are Approved!
+                </h3>
+                <p className="text-sm text-emerald-700 max-w-md mx-auto mb-6">
+                  There are currently no products waiting for admin review or commission setup. When farmers submit new products, they will appear here.
+                </p>
+                <button
+                  onClick={() => setActiveSection('dashboard')}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-sm transition-colors cursor-pointer"
+                >
+                  ← Return to Dashboard
+                </button>
+              </div>
+            ) : filteredPendingProducts.length === 0 ? (
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-8 text-center text-gray-500 font-medium">
+                No pending products matching &ldquo;{pendingProductSearch}&rdquo;.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filteredPendingProducts.map((product) => {
+                  const inputCommission = commissionValues[product.id];
+                  const currentCommission = Number(product.commission_amount || 0);
+                  const previewCommission =
+                    inputCommission !== undefined && inputCommission !== ''
+                      ? Number(inputCommission)
+                      : currentCommission;
+
+                  const farmerPrice = Number(product.price || 0);
+                  const customerPrice =
+                    farmerPrice +
+                    (Number.isFinite(previewCommission) ? previewCommission : 0);
+
+                  const detectedRate = detectTNMarketRate(
+                    product.name,
+                    product.unit,
+                    customerPrice
+                  );
+                  const discountPercent =
+                    detectedRate && detectedRate > customerPrice
+                      ? Math.round(((detectedRate - customerPrice) / detectedRate) * 100)
+                      : 0;
+
+                  const deliveryInfo = getDeliveryDetails(product);
+
+                  return (
+                    <div
+                      key={product.id}
+                      className="border border-amber-200 rounded-2xl bg-white p-4 sm:p-5 shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between"
+                    >
+                      <div>
+                        {/* Top Image & Badge */}
+                        <div className="relative rounded-xl overflow-hidden bg-gray-100 aspect-video mb-3.5 flex items-center justify-center">
+                          {product.image_url ? (
+                            <img
+                              src={product.image_url}
+                              alt={product.name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <span className="text-4xl">🌾</span>
+                          )}
+                          <span className="absolute top-2 left-2 bg-amber-500 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-sm">
+                            Pending Review
+                          </span>
+                          <span className="absolute top-2 right-2 bg-black/60 text-white text-[11px] px-2 py-0.5 rounded-full backdrop-blur-sm">
+                            {product.categories?.name || 'General'}
+                          </span>
+                        </div>
+
+                        {/* Title & Farmer */}
+                        <h3 className="text-base sm:text-lg font-bold text-gray-900 mb-1 leading-snug">
+                          {product.name}
+                        </h3>
+
+                        <div className="bg-gray-50 rounded-xl p-2.5 mb-3 border border-gray-100 text-xs text-gray-600 flex flex-col gap-1">
+                          <div className="flex items-center gap-1.5 font-medium text-gray-800">
+                            <span>👨‍🌾</span>
+                            <span>{product.profiles?.farm_name || product.profiles?.full_name || 'Farmer'}</span>
+                          </div>
+                          {(product.profiles?.village || product.profiles?.district) && (
+                            <div className="text-gray-500 flex items-center gap-1 pl-5">
+                              <span>📍</span>
+                              <span>
+                                {product.profiles?.village ? `${product.profiles.village}, ` : ''}
+                                {product.profiles?.district || ''}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Farmer Price & Stock */}
+                        <div className="grid grid-cols-2 gap-2 mb-3 bg-green-50/50 p-2.5 rounded-xl border border-green-100 text-xs">
+                          <div>
+                            <span className="text-gray-500 block text-[11px]">Farmer Price</span>
+                            <strong className="text-green-800 text-sm">
+                              ₹{farmerPrice.toFixed(2)}
+                              <span className="text-gray-500 font-normal text-[11px]">
+                                {' '}/ {product.unit_count || 1} {product.unit}
+                              </span>
+                            </strong>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 block text-[11px]">Available Stock</span>
+                            <strong className="text-gray-800 text-sm">
+                              {product.stock_quantity} {product.unit}
+                            </strong>
+                          </div>
+                        </div>
+
+                        {/* Shipping details */}
+                        <div className="text-[11px] text-gray-600 mb-3 bg-amber-50/40 p-2 rounded-lg border border-amber-100 flex items-center gap-1.5">
+                          <span>🚚</span>
+                          <span>
+                            {deliveryInfo.deliveryPrice > 0 ? (
+                              <>
+                                Shipping fee: <strong>₹{deliveryInfo.deliveryPrice}</strong> (Free shipping on <strong>{deliveryInfo.minFreeQty}+ {product.unit}</strong>)
+                              </>
+                            ) : (
+                              <strong className="text-green-700">Free shipping included</strong>
+                            )}
+                          </span>
+                        </div>
+
+                        {/* Description */}
+                        {cleanProductDescription(product.description) && (
+                          <p className="text-xs text-gray-500 line-clamp-2 mb-3 italic">
+                            &ldquo;{cleanProductDescription(product.description)}&rdquo;
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Approval Box */}
+                      <div className="bg-amber-50/60 rounded-xl p-3 border border-amber-200 mt-2 flex flex-col gap-2.5">
+                        <div>
+                          <label className="block text-xs font-bold text-gray-800 mb-1">
+                            Set Commission (₹ per {product.unit}) *
+                          </label>
+                          <div className="flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-green-800 focus-within:border-green-800">
+                            <span className="px-2.5 py-1.5 text-gray-500 font-bold bg-gray-50 border-r border-gray-200 text-sm">
+                              ₹
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={commissionValues[product.id] ?? ''}
+                              onChange={(e) => handleCommissionChange(product.id, e.target.value)}
+                              placeholder="e.g. 10"
+                              className="w-full px-2.5 py-1.5 text-sm outline-none text-gray-900"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Customer Price Preview */}
+                        <div className="flex items-baseline justify-between text-xs bg-white p-2 rounded-lg border border-amber-100">
+                          <span className="text-gray-600">Customer Price:</span>
+                          <strong className="text-sm text-gray-900">
+                            ₹{customerPrice.toFixed(2)} / {product.unit}
+                          </strong>
+                        </div>
+
+                        {/* TN Highest Benchmark Auto-Detection Preview */}
+                        <div className="text-[11px] p-2 rounded-lg bg-white border border-amber-100">
+                          {detectedRate && detectedRate > customerPrice ? (
+                            <div>
+                              <div className="flex items-center gap-1 text-emerald-800 font-bold">
+                                <span>✓</span>
+                                <span>TN Highest Market Benchmark: ₹{detectedRate.toFixed(2)} / {product.unit}</span>
+                              </div>
+                              <div className="text-gray-500 mt-0.5">
+                                Customer sees: <span className="line-through text-gray-400">₹{detectedRate.toFixed(2)}</span>{' '}
+                                <strong className="text-emerald-700">₹{customerPrice.toFixed(2)}</strong>{' '}
+                                <span className="bg-emerald-100 text-emerald-800 font-bold px-1 rounded text-[10px]">
+                                  {discountPercent}% OFF
+                                </span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-amber-800 text-[11px] flex items-center gap-1">
+                              <span>ℹ️</span>
+                              <span>
+                                TN rate not in auto-database. Clicking approve will prompt you to enter the market benchmark rate.
+                              </span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => approveProduct(product)}
+                            className="flex-1 py-2 px-3 bg-green-700 hover:bg-green-800 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer flex items-center justify-center gap-1 shadow-sm"
+                          >
+                            <span>✓</span> Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => rejectProduct(product)}
+                            className="py-2 px-3 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold rounded-lg text-xs transition-colors cursor-pointer"
+                          >
+                            ✕ Reject
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => deleteProduct(product)}
+                            title="Delete product"
+                            className="py-2 px-2.5 bg-gray-50 hover:bg-gray-100 text-gray-600 border border-gray-200 rounded-lg text-xs transition-colors cursor-pointer"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* =================================================
             PRODUCTS
         ================================================= */}
 
@@ -2281,14 +2714,64 @@ async function rejectReview(review) {
             </div>
           )}
 
-          {products.length === 0 ? (
+          {/* PRODUCT FILTER TABS */}
+          <div className="flex items-center gap-2 mb-6 flex-wrap">
+            <button
+              onClick={() => setProductFilter('all')}
+              className={`py-1.5 px-3.5 rounded-full text-xs font-bold transition-colors cursor-pointer ${
+                productFilter === 'all'
+                  ? 'bg-green-800 text-white'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              All Products ({products.length})
+            </button>
+            <button
+              onClick={() => setProductFilter('pending')}
+              className={`py-1.5 px-3.5 rounded-full text-xs font-bold transition-colors cursor-pointer ${
+                productFilter === 'pending'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
+              }`}
+            >
+              ⏳ Pending Approval ({pendingProducts.length})
+            </button>
+            <button
+              onClick={() => setProductFilter('approved')}
+              className={`py-1.5 px-3.5 rounded-full text-xs font-bold transition-colors cursor-pointer ${
+                productFilter === 'approved'
+                  ? 'bg-emerald-700 text-white'
+                  : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-200'
+              }`}
+            >
+              ✓ Approved ({products.filter(p => p.approval_status === 'active').length})
+            </button>
+            <button
+              onClick={() => setProductFilter('rejected')}
+              className={`py-1.5 px-3.5 rounded-full text-xs font-bold transition-colors cursor-pointer ${
+                productFilter === 'rejected'
+                  ? 'bg-red-700 text-white'
+                  : 'bg-red-50 text-red-700 hover:bg-red-100 border border-red-200'
+              }`}
+            >
+              ✕ Rejected ({products.filter(p => p.approval_status === 'rejected').length})
+            </button>
+          </div>
+
+          {displayedProducts.length === 0 ? (
             <div className="text-center py-[50px] px-[20px] text-[#777] sm:max-w-full">
               <h3>
                 No products found
               </h3>
 
               <p>
-                Farmer products will appear here.
+                {productFilter === 'pending'
+                  ? 'No products are currently pending approval!'
+                  : productFilter === 'approved'
+                  ? 'No approved products yet.'
+                  : productFilter === 'rejected'
+                  ? 'No rejected products.'
+                  : 'Farmer products will appear here.'}
               </p>
             </div>
           ) : (
@@ -2298,7 +2781,7 @@ async function rejectReview(review) {
               }
             >
 
-              {products.map(
+              {displayedProducts.map(
                 (product) => {
 
                   const inputCommission =
@@ -4184,6 +4667,166 @@ async function rejectReview(review) {
         )}
 
       </section>
+
+      {/* =====================================================
+          MANUAL TN HIGHEST MARKET RATE MODAL (RARE CASE)
+      ===================================================== */}
+      {manualRateModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalCard}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+              <span style={{ fontSize: '28px' }}>⚠️</span>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 'bold', color: '#1e293b' }}>
+                  TN Highest Market Rate Required
+                </h3>
+                <p style={{ margin: '3px 0 0', fontSize: '12px', color: '#b45309', fontWeight: 600 }}>
+                  Auto-detection could not find a verified Tamil Nadu market rate for this product.
+                </p>
+              </div>
+            </div>
+
+            <div style={styles.modalWarningBox}>
+              In order to show the <strong>strikethrough rate (~~MRP~~)</strong> and <strong>discount offer (% OFF)</strong> to customers, this product <strong>cannot be approved</strong> without entering the highest retail rate in Tamil Nadu.
+            </div>
+
+            {/* Product Summary */}
+            <div style={styles.modalSummaryBox}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: '#64748b' }}>Product:</span>
+                <strong style={{ color: '#0f172a' }}>{manualRateModal.product.name}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: '#64748b' }}>Farmer Price:</span>
+                <span>₹{manualRateModal.farmerPrice.toFixed(2)} / {manualRateModal.product.unit}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                <span style={{ color: '#64748b' }}>Admin Commission:</span>
+                <span style={{ color: '#15803d', fontWeight: 600 }}>+₹{manualRateModal.commission.toFixed(2)}</span>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
+                <strong style={{ color: '#0f172a' }}>Customer Selling Price:</strong>
+                <strong style={{ color: '#166534', fontSize: '15px' }}>
+                  ₹{manualRateModal.customerPrice.toFixed(2)} / {manualRateModal.product.unit}
+                </strong>
+              </div>
+            </div>
+
+            {/* Manual Rate Input */}
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 'bold', color: '#1e293b', marginBottom: '6px' }}>
+              Enter TN Highest Retail Market Rate (₹) *
+              <span style={{ fontWeight: 'normal', color: '#64748b', fontSize: '11px' }}> (per {manualRateModal.product.unit})</span>
+            </label>
+            <div style={{ position: 'relative', marginBottom: '14px' }}>
+              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', fontWeight: 'bold', color: '#64748b' }}>₹</span>
+              <input
+                type="number"
+                min={manualRateModal.customerPrice + 1}
+                step="1"
+                placeholder={`E.g. ${(manualRateModal.customerPrice * 1.3).toFixed(0)}`}
+                value={manualRateModal.manualRate}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setManualRateModal((prev) => ({
+                    ...prev,
+                    manualRate: val,
+                    error: '',
+                  }))
+                }}
+                style={{
+                  width: '100%',
+                  padding: '10px 12px 10px 28px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '15px',
+                  fontWeight: 'bold',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            {/* Live Auto-Calculated Offer Preview */}
+            {Number(manualRateModal.manualRate) > manualRateModal.customerPrice && (
+              <div style={styles.modalOfferPreview}>
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#166534', marginBottom: '4px' }}>
+                  ✓ Customer Strikethrough & Offer Preview:
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+                  <strong style={{ fontSize: '18px', color: '#0f172a' }}>
+                    ₹{manualRateModal.customerPrice.toFixed(2)}
+                  </strong>
+                  <span style={{ fontSize: '14px', color: '#94a3b8', textDecoration: 'line-through' }}>
+                    ₹{Number(manualRateModal.manualRate).toFixed(2)}
+                  </span>
+                  <span style={{ background: '#166534', color: '#fff', fontSize: '11px', fontWeight: 800, padding: '2px 8px', borderRadius: '12px' }}>
+                    {Math.round(((Number(manualRateModal.manualRate) - manualRateModal.customerPrice) / Number(manualRateModal.manualRate)) * 100)}% OFF
+                  </span>
+                </div>
+                <div style={{ fontSize: '11px', color: '#15803d', marginTop: '4px', fontWeight: 600 }}>
+                  Direct Savings: ₹{(Number(manualRateModal.manualRate) - manualRateModal.customerPrice).toFixed(2)} / {manualRateModal.product.unit}
+                </div>
+              </div>
+            )}
+
+            {manualRateModal.manualRate && Number(manualRateModal.manualRate) <= manualRateModal.customerPrice && (
+              <p style={{ fontSize: '12px', color: '#dc2626', margin: '0 0 12px', fontWeight: 600 }}>
+                ⚠️ Rate must be higher than the customer selling price (₹{manualRateModal.customerPrice.toFixed(2)}) to show an offer discount.
+              </p>
+            )}
+
+            {manualRateModal.error && (
+              <p style={{ fontSize: '12px', color: '#dc2626', margin: '0 0 12px' }}>{manualRateModal.error}</p>
+            )}
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+              <button
+                onClick={() => setManualRateModal(null)}
+                style={{
+                  padding: '9px 16px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  background: '#f8fafc',
+                  color: '#475569',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel (Do not approve)
+              </button>
+              <button
+                onClick={() => {
+                  const entered = Number(manualRateModal.manualRate)
+                  if (!entered || !Number.isFinite(entered) || entered <= manualRateModal.customerPrice) {
+                    setManualRateModal((prev) => ({
+                      ...prev,
+                      error: `Please enter a valid rate greater than ₹${manualRateModal.customerPrice.toFixed(2)}.`,
+                    }))
+                    return
+                  }
+                  executeProductApproval(manualRateModal.product, manualRateModal.commission, entered)
+                }}
+                disabled={!manualRateModal.manualRate || Number(manualRateModal.manualRate) <= manualRateModal.customerPrice}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: '#166534',
+                  color: '#ffffff',
+                  fontWeight: 'bold',
+                  fontSize: '13px',
+                  cursor: !manualRateModal.manualRate || Number(manualRateModal.manualRate) <= manualRateModal.customerPrice ? 'not-allowed' : 'pointer',
+                  opacity: !manualRateModal.manualRate || Number(manualRateModal.manualRate) <= manualRateModal.customerPrice ? 0.6 : 1,
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                }}
+              >
+                ✓ Confirm & Approve Product
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }
@@ -5219,5 +5862,58 @@ const styles = {
     color: '#fff',
     borderRadius: '8px',
     cursor: 'pointer',
+  },
+
+  modalOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 9999,
+    padding: '16px',
+    backdropFilter: 'blur(4px)',
+  },
+
+  modalCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: '16px',
+    padding: '24px',
+    maxWidth: '520px',
+    width: '100%',
+    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1)',
+    border: '1px solid #e2e8f0',
+  },
+
+  modalWarningBox: {
+    background: '#fffbeb',
+    border: '1px solid #fde68a',
+    borderRadius: '10px',
+    padding: '12px 14px',
+    color: '#92400e',
+    fontSize: '13px',
+    lineHeight: 1.5,
+    marginBottom: '14px',
+  },
+
+  modalSummaryBox: {
+    background: '#f8fafc',
+    border: '1px solid #e2e8f0',
+    borderRadius: '10px',
+    padding: '14px',
+    marginBottom: '16px',
+    fontSize: '13px',
+  },
+
+  modalOfferPreview: {
+    background: '#f0fdf4',
+    border: '1px solid #bbf7d0',
+    borderRadius: '10px',
+    padding: '12px 14px',
+    marginBottom: '14px',
   },
 }

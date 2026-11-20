@@ -7,6 +7,12 @@ import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { showToast, setFlashToast } from '@/app/components/Toast'
 import { ensureFarmerAccess } from '@/lib/farmerAuth'
+import {
+  saveProductDeliveryConfig,
+  formatProductDescriptionWithDelivery,
+  cleanProductDescription,
+  getDeliveryDetails,
+} from '@/lib/pricing'
 
 export default function EditProduct() {
   const router = useRouter()
@@ -27,6 +33,7 @@ export default function EditProduct() {
   const [unit, setUnit] = useState('')
   const [stock, setStock] = useState('')
   const [deliveryPrice, setDeliveryPrice] = useState('')
+  const [minFreeDeliveryQty, setMinFreeDeliveryQty] = useState('1')
   const [existingImages, setExistingImages] = useState([])
   const [newImages, setNewImages] = useState([])
 
@@ -38,12 +45,15 @@ export default function EditProduct() {
 
   const handleNewVariantChange = (index, field, value) => {
     const updated = [...newVariants]
-    updated[index][field] = value
+    updated[index] = {
+      ...updated[index],
+      [field]: value ?? '',
+    }
     setNewVariants(updated)
   }
 
   const addNewVariant = () => {
-    setNewVariants([...newVariants, { price: '', unitCount: '1', unit: 'kg', deliveryPrice: '' }])
+    setNewVariants([...newVariants, { price: '', unitCount: '1', unit: 'kg', deliveryPrice: '', minFreeDeliveryQty: '1' }])
   }
 
   const removeNewVariant = (index) => {
@@ -104,14 +114,17 @@ export default function EditProduct() {
       setProduct(productData)
       setCategories(categoryData || [])
 
+      const initialDelivery = getDeliveryDetails(productData);
+
       setName(productData.name || '')
       setCategoryId(productData.category_id || '')
-      setDescription(productData.description || '')
+      setDescription(cleanProductDescription(productData.description || ''))
       setPrice(productData.price ?? '')
       setUnitCount(productData.unit_count ?? '1')
       setUnit(productData.unit || '')
       setStock(productData.stock_quantity ?? '')
-      setDeliveryPrice(productData.delivery_price ?? '0')
+      setDeliveryPrice(productData.delivery_price ?? initialDelivery.deliveryPrice ?? '0')
+      setMinFreeDeliveryQty(productData.min_free_delivery_qty ?? initialDelivery.minFreeQty ?? '1')
 
       const initialImages = Array.isArray(productData.images) && productData.images.length > 0
         ? productData.images
@@ -138,10 +151,10 @@ export default function EditProduct() {
     const files = Array.from(e.target.files || [])
     if (!files.length) return
     const totalCurrent = existingImages.length + newImages.length
-    const availableSlots = 4 - totalCurrent
+    const availableSlots = 2 - totalCurrent
 
     if (availableSlots <= 0) {
-      alert('You can only have up to 4 images in total.')
+      alert('You can only have up to 2 images in total.')
       e.target.value = ''
       return
     }
@@ -222,26 +235,32 @@ export default function EditProduct() {
       }
     }
 
-    const finalImages = [...existingImages, ...uploadedNewImages].slice(0, 4)
+    const finalImages = [...existingImages, ...uploadedNewImages].slice(0, 2)
 
     const isMainBag = trimmedUnit.includes('bag');
     const finalMainUnitCount = isMainBag ? 1 : Number(unitCount);
+    const minQty = Math.max(1, Number(minFreeDeliveryQty || 1));
+    const delPrice = Number(deliveryPrice || 0);
+    const taggedDescription = formatProductDescriptionWithDelivery(trimmedDescription, {
+      minFreeQty: minQty,
+      deliveryPrice: delPrice,
+    });
 
-    const updatePayload = {
+    let updatePayload = {
       name: trimmedName,
       category_id: categoryId,
-      description: trimmedDescription,
+      description: taggedDescription,
       price: Number(price),
       unit_count: finalMainUnitCount,
       unit: trimmedUnit,
-      delivery_price: Number(deliveryPrice || 0),
+      delivery_price: delPrice,
       stock_quantity: Number(stock),
       image_url: finalImages.length > 0 ? finalImages[0] : null,
       images: finalImages,
     }
 
     // Update existing product
-    const { error: updateError } = await supabase
+    let { error: updateError } = await supabase
       .from('products')
       .update(updatePayload)
       .eq('id', params.id)
@@ -254,20 +273,33 @@ export default function EditProduct() {
       return
     }
 
+    // Persist delivery config locally
+    saveProductDeliveryConfig(params.id, {
+      minFreeQty: minQty,
+      deliveryPrice: delPrice,
+    })
+
     // Insert new variants if any
     if (newVariants.length > 0) {
-      const newProducts = newVariants.map((v) => {
+      let newProducts = newVariants.map((v) => {
         const isBag = v.unit.includes('bag');
         const finalUnitCount = isBag ? 1 : Number(v.unitCount);
+        const vMinQty = Math.max(1, Number(v.minFreeDeliveryQty || 1));
+        const vDelPrice = Number(v.deliveryPrice || 0);
+        const vTaggedDescription = formatProductDescriptionWithDelivery(trimmedDescription, {
+          minFreeQty: vMinQty,
+          deliveryPrice: vDelPrice,
+        });
+
         return {
           farmer_id: user.id,
           category_id: categoryId,
           name: `${trimmedName} - ${isBag ? '' : finalUnitCount + ' '}${v.unit}`,
-          description: trimmedDescription,
+          description: vTaggedDescription,
           price: Number(v.price),
           unit_count: finalUnitCount,
           unit: v.unit,
-          delivery_price: Number(v.deliveryPrice || 0),
+          delivery_price: vDelPrice,
           stock_quantity: Number(stock),
           image_url: finalImages.length > 0 ? finalImages[0] : null,
           images: finalImages,
@@ -277,7 +309,7 @@ export default function EditProduct() {
         }
       })
 
-      const { error: insertError } = await supabase
+      let { error: insertError } = await supabase
         .from('products')
         .insert(newProducts)
 
@@ -389,7 +421,7 @@ export default function EditProduct() {
                 {t('farmer.photosCount', { count: existingImages.length + newImages.length })}
               </label>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
+              <div className="grid grid-cols-2 gap-3 mb-3">
                 {/* Existing Images */}
                 {existingImages.map((url, idx) => (
                   <div key={`exist-${idx}`} className="relative rounded-lg overflow-hidden border border-gray-200 aspect-square bg-white flex items-center justify-center group shadow-sm">
@@ -427,7 +459,7 @@ export default function EditProduct() {
                 ))}
               </div>
 
-              {existingImages.length + newImages.length < 4 && (
+              {existingImages.length + newImages.length < 2 && (
                 <div>
                   <input
                     id="edit-product-images"
@@ -438,7 +470,7 @@ export default function EditProduct() {
                     className="w-full py-2 text-sm text-gray-700 file:mr-4 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-green-50 file:text-green-800 hover:file:bg-green-100 transition-all cursor-pointer"
                   />
                   <p className="mt-1 text-xs text-gray-500">
-                    {t('farmer.addMoreImages', { count: 4 - (existingImages.length + newImages.length) })}
+                    {t('farmer.addMoreImages', { count: 2 - (existingImages.length + newImages.length) })}
                   </p>
                 </div>
               )}
@@ -494,14 +526,14 @@ export default function EditProduct() {
           />
 
           <div className="mt-8 mb-2 font-bold text-lg border-b pb-2">{t('farmer.mainVariantTitle')}</div>
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 sm:gap-[15px] mt-4 sm:mt-[18px]">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mt-4 sm:mt-[18px]">
             <div>
               <label className="block mb-2 font-semibold text-gray-700 text-sm sm:text-base">Farmer Price *</label>
               <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden bg-white focus-within:border-green-600 focus-within:ring-1 focus-within:ring-green-600">
                 <span className="pl-3 text-gray-500 font-semibold text-sm sm:text-base">₹</span>
                 <input
                   type="number"
-                  value={price}
+                  value={price ?? ''}
                   onChange={(e) => setPrice(e.target.value)}
                   className="w-full p-2.5 sm:p-[12px_10px] border-none outline-none text-sm sm:text-[15px]"
                   placeholder="60"
@@ -510,11 +542,11 @@ export default function EditProduct() {
                 />
               </div>
             </div>
-            {!unit.includes('bag') && <div>
+            {!unit?.includes('bag') && <div>
                 <label className="block mb-2 font-semibold text-gray-700 text-sm sm:text-base">{t('farmer.unitCountLabel')}</label>
               <input
                 type="number"
-                value={unitCount}
+                value={unitCount ?? '1'}
                 onChange={(e) => setUnitCount(e.target.value)}
                 className="w-full p-2.5 sm:p-[13px_10px] border border-gray-300 rounded-lg text-sm sm:text-[15px] bg-white outline-none focus:border-green-600 focus:ring-1 focus:ring-green-600"
                 placeholder="1"
@@ -525,7 +557,7 @@ export default function EditProduct() {
               <div>
                 <label className="block mb-2 font-semibold text-gray-700 text-sm sm:text-base">{t('farmer.unitLabel')}</label>
               <select
-                value={unit}
+                value={unit ?? 'kg'}
                 onChange={(e) => setUnit(e.target.value)}
                 className="w-full p-2.5 sm:p-[13px_10px] border border-gray-300 rounded-lg text-sm sm:text-[15px] bg-white outline-none focus:border-green-600 focus:ring-1 focus:ring-green-600"
               >
@@ -550,7 +582,7 @@ export default function EditProduct() {
                 <span className="pl-3 text-gray-500 font-semibold text-sm sm:text-base">₹</span>
                 <input
                   type="number"
-                  value={deliveryPrice}
+                  value={deliveryPrice ?? ''}
                   onChange={(e) => setDeliveryPrice(e.target.value)}
                   className="w-full p-2.5 sm:p-[12px_10px] border-none outline-none text-sm sm:text-[15px]"
                   placeholder="0"
@@ -559,6 +591,25 @@ export default function EditProduct() {
                 />
               </div>
             </div>
+            <div>
+              <label className="block mb-2 font-semibold text-gray-700 text-sm sm:text-base">
+                {t('farmer.minFreeDeliveryQtyLabel')}
+              </label>
+              <input
+                type="number"
+                value={minFreeDeliveryQty ?? '1'}
+                onChange={(e) => setMinFreeDeliveryQty(e.target.value)}
+                className="w-full p-2.5 sm:p-[13px_10px] border border-gray-300 rounded-lg text-sm sm:text-[15px] bg-white outline-none focus:border-green-600 focus:ring-1 focus:ring-green-600"
+                placeholder="1"
+                min="1"
+                step="1"
+              />
+            </div>
+          </div>
+
+          <div className="mt-3 p-2.5 bg-green-50 rounded-lg border border-green-200 text-xs text-green-800 flex items-center gap-2">
+            <span className="text-sm">🚚</span>
+            <span>{t('farmer.minFreeDeliveryQtyHint')}</span>
           </div>
 
           <div className="mt-8 mb-4">
@@ -587,12 +638,12 @@ export default function EditProduct() {
                   {t('farmer.variantNum', { n: index + 1 })}
                 </div>
                 
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                   <div>
                     <label className="block mb-2 text-sm font-semibold text-gray-700">{t('farmer.priceStarLabel')}</label>
                     <input
                       type="number"
-                      value={v.price}
+                      value={v.price ?? ''}
                       onChange={(e) => handleNewVariantChange(index, 'price', e.target.value)}
                       placeholder={t('common.price')}
                       min="0"
@@ -601,11 +652,11 @@ export default function EditProduct() {
                       required
                     />
                   </div>
-                  {!v.unit.includes('bag') && <div>
+                  {!v.unit?.includes('bag') && <div>
                       <label className="block mb-2 text-sm font-semibold text-gray-700">{t('farmer.unitCountLabel')}</label>
                     <input
                       type="number"
-                      value={v.unitCount}
+                      value={v.unitCount ?? '1'}
                       onChange={(e) => handleNewVariantChange(index, 'unitCount', e.target.value)}
                       placeholder="1"
                       min="0"
@@ -617,7 +668,7 @@ export default function EditProduct() {
                     <div>
                       <label className="block mb-2 text-sm font-semibold text-gray-700">{t('farmer.unitLabel')}</label>
                     <select
-                      value={v.unit}
+                      value={v.unit ?? 'kg'}
                       onChange={(e) => handleNewVariantChange(index, 'unit', e.target.value)}
                       className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-green-800"
                       required
@@ -637,7 +688,7 @@ export default function EditProduct() {
                     <label className="block mb-2 text-sm font-semibold text-gray-700">{t('farmer.deliveryPriceLabel')}</label>
                     <input
                       type="number"
-                      value={v.deliveryPrice}
+                      value={v.deliveryPrice ?? ''}
                       onChange={(e) => handleNewVariantChange(index, 'deliveryPrice', e.target.value)}
                       placeholder="e.g. 20"
                       min="0"
@@ -646,6 +697,26 @@ export default function EditProduct() {
                       required
                     />
                   </div>
+                  <div>
+                    <label className="block mb-2 text-sm font-semibold text-gray-700">
+                      {t('farmer.minFreeDeliveryQtyLabel')}
+                    </label>
+                    <input
+                      type="number"
+                      value={v.minFreeDeliveryQty ?? '1'}
+                      onChange={(e) => handleNewVariantChange(index, 'minFreeDeliveryQty', e.target.value)}
+                      placeholder="e.g. 5"
+                      min="1"
+                      step="1"
+                      className="w-full p-2.5 border border-gray-300 rounded-lg text-sm bg-white outline-none focus:ring-2 focus:ring-green-800"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-3 p-2.5 bg-green-50 rounded-lg border border-green-200 text-xs text-green-800 flex items-center gap-2">
+                  <span className="text-sm">🚚</span>
+                  <span>{t('farmer.minFreeDeliveryQtyHint')}</span>
                 </div>
               </div>
             ))}

@@ -68,7 +68,7 @@ export default function ProductDetailsClient() {
     setUser(user || null)
   }
 
-  function handleAddToCart(quantityToAdd) {
+  function handleAddToCart(quantityToAdd, deliveryOptions = null) {
     if (!user) {
       alert(t("home.loginToCart"));
       router.push("/login");
@@ -91,6 +91,9 @@ export default function ProductDetailsClient() {
       existingCart = [];
     }
 
+    const minFreeQty = Number(product.min_free_delivery_qty || 1);
+    const baseDeliveryPrice = Number(product.delivery_price || 0);
+
     const existingItem = existingCart.find((item) => item.id === product.id);
     let updatedCart;
     if (existingItem) {
@@ -99,10 +102,25 @@ export default function ProductDetailsClient() {
         alert(t("home.stockLimitAlert", { stock, unit: tu(product.unit || "unit") }));
         return;
       }
+      const computedDelivery = deliveryOptions && deliveryOptions.deliveryFee !== undefined
+        ? deliveryOptions.deliveryFee
+        : (newQuantity >= minFreeQty ? 0 : baseDeliveryPrice);
+
       updatedCart = existingCart.map((item) =>
-        item.id === product.id ? { ...item, quantity: newQuantity } : item
+        item.id === product.id
+          ? {
+              ...item,
+              quantity: newQuantity,
+              delivery_price: computedDelivery,
+              min_free_delivery_qty: minFreeQty,
+            }
+          : item
       );
     } else {
+      const computedDelivery = deliveryOptions && deliveryOptions.deliveryFee !== undefined
+        ? deliveryOptions.deliveryFee
+        : (quantityToAdd >= minFreeQty ? 0 : baseDeliveryPrice);
+
       updatedCart = [
         ...existingCart,
         {
@@ -116,6 +134,8 @@ export default function ProductDetailsClient() {
           stock_quantity: stock,
           farmer_id: product.farmer_id,
           quantity: quantityToAdd,
+          delivery_price: computedDelivery,
+          min_free_delivery_qty: minFreeQty,
         },
       ];
     }

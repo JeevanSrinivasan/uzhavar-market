@@ -145,9 +145,15 @@ export default function CheckoutPage() {
     );
   }
 
+  function getItemDelivery(item) {
+    const minFreeQty = Number(item.min_free_delivery_qty) || 1;
+    const isFree = Number(item.quantity || 0) >= minFreeQty;
+    return isFree ? 0 : Number(item.delivery_price || 0);
+  }
+
   function getItemTotal(item) {
     return (
-      getCustomerPrice(item) * Number(item.quantity || 0) + Number(item.delivery_price || 0)
+      getCustomerPrice(item) * Number(item.quantity || 0) + getItemDelivery(item)
     );
   }
 
@@ -157,7 +163,7 @@ export default function CheckoutPage() {
   );
 
   const totalDelivery = cart.reduce(
-    (total, item) => total + Number(item.delivery_price || 0),
+    (total, item) => total + getItemDelivery(item),
     0
   );
 

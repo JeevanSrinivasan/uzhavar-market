@@ -131,12 +131,28 @@ export default function CustomerCartPage() {
     );
   };
 
+  const getItemDelivery = (item) => {
+    const minFreeQty = Number(item.min_free_delivery_qty) || 1;
+    const isFree = Number(item.quantity || 1) >= minFreeQty;
+    return isFree ? 0 : Number(item.delivery_price || 0);
+  };
+
   const getItemTotal = (item) => {
-    return (getItemPrice(item) * Number(item.quantity || 1)) + Number(item.delivery_price || 0);
+    return (getItemPrice(item) * Number(item.quantity || 1)) + getItemDelivery(item);
   };
 
   const cartTotal = cart.reduce(
     (total, item) => total + getItemTotal(item),
+    0
+  );
+
+  const productSubtotal = cart.reduce(
+    (total, item) => total + (getItemPrice(item) * Number(item.quantity || 1)),
+    0
+  );
+
+  const totalDeliveryFee = cart.reduce(
+    (total, item) => total + getItemDelivery(item),
     0
   );
 
@@ -262,9 +278,23 @@ export default function CustomerCartPage() {
                       ₹{price.toFixed(2)} <span className="text-gray-500 text-sm font-normal">/ {item.unit_count || 1} {tu(item.unit || "unit")}</span>
                     </p>
                     {Number(item.delivery_price) > 0 ? (
-                      <p className="text-xs sm:text-sm text-gray-600 mb-1">
-                        {t("common.deliveryFee", { amount: Number(item.delivery_price).toFixed(2) })}
-                      </p>
+                      getItemDelivery(item) === 0 ? (
+                        <p className="text-xs sm:text-sm text-green-700 font-semibold mb-1 flex items-center gap-1">
+                          <span>✓ {t("common.freeDelivery")}</span>
+                          <span className="text-[11px] text-green-600 font-normal">
+                            (Min {item.min_free_delivery_qty} {tu(item.unit || "unit")} met)
+                          </span>
+                        </p>
+                      ) : (
+                        <p className="text-xs sm:text-sm text-gray-600 mb-1">
+                          {t("common.deliveryFee", { amount: Number(item.delivery_price).toFixed(2) })}
+                          {Number(item.min_free_delivery_qty) > 1 && (
+                            <span className="text-amber-800 font-medium block text-[11px] mt-0.5">
+                              (Add {Math.max(0, Number(item.min_free_delivery_qty) - Number(item.quantity || 1))} more for Free Shipping)
+                            </span>
+                          )}
+                        </p>
+                      )
                     ) : (
                       <p className="text-xs sm:text-sm text-green-600 font-medium mb-1">
                         {t("common.freeDelivery")}
@@ -328,9 +358,15 @@ export default function CustomerCartPage() {
               <span>{t("cart.items")}</span>
               <span className="font-medium text-gray-900">{totalItems}</span>
             </div>
-            <div className="flex justify-between items-center text-gray-600 mb-5 text-sm sm:text-base">
+            <div className="flex justify-between items-center text-gray-600 mb-3 text-sm sm:text-base">
               <span>{t("cart.subtotal")}</span>
-              <span className="font-medium text-gray-900">₹{cartTotal.toFixed(2)}</span>
+              <span className="font-medium text-gray-900">₹{productSubtotal.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between items-center text-gray-600 mb-5 text-sm sm:text-base">
+              <span>{t("checkout.delivery", "Shipping Fee")}</span>
+              <span className={`font-semibold ${totalDeliveryFee === 0 ? 'text-green-700 font-bold' : 'text-gray-900'}`}>
+                {totalDeliveryFee === 0 ? t("common.freeDelivery") : `+₹${totalDeliveryFee.toFixed(2)}`}
+              </span>
             </div>
             
             <hr className="border-t border-gray-100 my-5" />
