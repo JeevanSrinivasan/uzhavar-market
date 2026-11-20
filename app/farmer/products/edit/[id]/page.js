@@ -123,8 +123,8 @@ export default function EditProduct() {
       setUnitCount(productData.unit_count ?? '1')
       setUnit(productData.unit || '')
       setStock(productData.stock_quantity ?? '')
-      setDeliveryPrice(productData.delivery_price ?? initialDelivery.deliveryPrice ?? '0')
-      setMinFreeDeliveryQty(productData.min_free_delivery_qty ?? initialDelivery.minFreeQty ?? '1')
+      setDeliveryPrice(String(initialDelivery.deliveryPrice ?? productData.delivery_price ?? '0'))
+      setMinFreeDeliveryQty(String(initialDelivery.minFreeQty ?? productData.min_free_delivery_qty ?? '1'))
 
       const initialImages = Array.isArray(productData.images) && productData.images.length > 0
         ? productData.images
@@ -254,6 +254,7 @@ export default function EditProduct() {
       unit_count: finalMainUnitCount,
       unit: trimmedUnit,
       delivery_price: delPrice,
+      min_free_delivery_qty: minQty,
       stock_quantity: Number(stock),
       image_url: finalImages.length > 0 ? finalImages[0] : null,
       images: finalImages,
@@ -265,6 +266,16 @@ export default function EditProduct() {
       .update(updatePayload)
       .eq('id', params.id)
       .eq('farmer_id', user.id)
+
+    if (updateError && updateError.message && updateError.message.includes('min_free_delivery_qty')) {
+      const { min_free_delivery_qty, ...fallbackPayload } = updatePayload
+      const fallbackRes = await supabase
+        .from('products')
+        .update(fallbackPayload)
+        .eq('id', params.id)
+        .eq('farmer_id', user.id)
+      updateError = fallbackRes.error
+    }
 
     if (updateError) {
       console.log('UPDATE ERROR:', updateError)
@@ -300,6 +311,7 @@ export default function EditProduct() {
           unit_count: finalUnitCount,
           unit: v.unit,
           delivery_price: vDelPrice,
+          min_free_delivery_qty: vMinQty,
           stock_quantity: Number(stock),
           image_url: finalImages.length > 0 ? finalImages[0] : null,
           images: finalImages,
@@ -312,6 +324,12 @@ export default function EditProduct() {
       let { error: insertError } = await supabase
         .from('products')
         .insert(newProducts)
+
+      if (insertError && insertError.message && insertError.message.includes('min_free_delivery_qty')) {
+        const fallbackNewProducts = newProducts.map(({ min_free_delivery_qty, ...rest }) => rest)
+        const fallbackRes = await supabase.from('products').insert(fallbackNewProducts)
+        insertError = fallbackRes.error
+      }
 
       if (insertError) {
         console.log('INSERT ERROR:', insertError)

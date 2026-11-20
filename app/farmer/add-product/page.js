@@ -176,6 +176,7 @@ export default function AddProduct() {
         unit: v.unit,
         unit_count: finalUnitCount,
         delivery_price: delPrice,
+        min_free_delivery_qty: minQty,
         stock_quantity: Number(stock),
         image_url: imageUrls.length > 0 ? imageUrls[0] : null,
         images: imageUrls,
@@ -185,9 +186,15 @@ export default function AddProduct() {
       }
     })
 
-    const { error: productError } = await supabase
+    let { error: productError } = await supabase
       .from('products')
       .insert(rowsToInsert)
+
+    if (productError && productError.message && productError.message.includes('min_free_delivery_qty')) {
+      const fallbackRows = rowsToInsert.map(({ min_free_delivery_qty, ...rest }) => rest)
+      const fallbackRes = await supabase.from('products').insert(fallbackRows)
+      productError = fallbackRes.error
+    }
 
     if (productError) {
       const err = `Product save failed: ${productError.message}`

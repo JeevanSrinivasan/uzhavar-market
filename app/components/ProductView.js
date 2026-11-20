@@ -377,7 +377,7 @@ export default function ProductView({
             {pricing.discountPercent > 0 && (
               <>
                 <span className="text-base sm:text-lg text-gray-400 line-through font-medium">
-                  {t('common.mrp')}: ₹{pricing.marketPrice.toFixed(2)}
+                  ₹{pricing.marketPrice.toFixed(2)}
                 </span>
                 <span className="text-xs sm:text-sm font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md border border-emerald-300">
                   {pricing.discountPercent}% {t('common.off')}
@@ -395,9 +395,6 @@ export default function ProductView({
                   amount: pricing.savingsAmount.toFixed(0),
                   percent: pricing.discountPercent,
                 })}
-              </span>
-              <span className="text-gray-500 text-xs">
-                ({t('common.marketRateNotice', { amount: pricing.marketPrice.toFixed(0) })})
               </span>
             </div>
           )}

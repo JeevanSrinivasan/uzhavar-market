@@ -10,7 +10,7 @@ import HeroBanner from "./components/HeroBanner";
 import Footer from "./components/Footer";
 import LanguageToggle from "./components/LanguageToggle";
 import { useLanguage } from "./context/LanguageContext";
-import { getProductPricing, cleanProductDescription } from "@/lib/pricing";
+import { getProductPricing, cleanProductDescription, getDeliveryDetails } from "@/lib/pricing";
 
 function readCartFromStorage(cartKey) {
   try {
@@ -24,6 +24,7 @@ function readCartFromStorage(cartKey) {
 }
 
 function buildCartItem(product, stock) {
+  const deliveryInfo = getDeliveryDetails(product, 1);
   return {
     id: product.id,
     name: product.name,
@@ -34,6 +35,8 @@ function buildCartItem(product, stock) {
     image_url: product.image_url || "",
     stock_quantity: stock,
     farmer_id: product.farmer_id,
+    delivery_price: deliveryInfo.deliveryPrice,
+    min_free_delivery_qty: deliveryInfo.minFreeQty,
     quantity: 1,
   };
 }

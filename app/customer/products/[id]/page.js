@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import ProductView from "@/app/components/ProductView";
 import { useLanguage } from "@/app/context/LanguageContext";
+import { getDeliveryDetails } from "@/lib/pricing";
 
 export default function CustomerProductDetailsPage() {
   const params = useParams();
@@ -109,8 +110,9 @@ export default function CustomerProductDetailsPage() {
         cart = [];
       }
 
-      const minFreeQty = Number(product.min_free_delivery_qty || 1);
-      const baseDeliveryPrice = Number(product.delivery_price || 0);
+      const deliveryInfo = getDeliveryDetails(product, quantityToAdd);
+      const minFreeQty = deliveryInfo.minFreeQty;
+      const baseDeliveryPrice = deliveryInfo.deliveryPrice;
 
       const existingIndex = cart.findIndex(
         (item) => String(item.id) === String(product.id)
