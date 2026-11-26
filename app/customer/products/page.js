@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import HeroBanner from "@/app/components/HeroBanner";
 import Footer from "@/app/components/Footer";
 import { useLanguage } from "@/app/context/LanguageContext";
-import { getProductPricing, cleanProductDescription } from "@/lib/pricing";
+import { getProductPricing, cleanProductDescription, getDeliveryDetails } from "@/lib/pricing";
 
 export default function CustomerProductsPage() {
   const router = useRouter();
@@ -190,6 +190,7 @@ export default function CustomerProductsPage() {
                 t("common.localFarmer");
               const place = product.profiles?.district;
               const pricing = getProductPricing(product);
+              const deliveryInfo = getDeliveryDetails(product);
 
               return (
                 <div
@@ -254,9 +255,10 @@ export default function CustomerProductsPage() {
                         </span>
                       </div>
                       
-                      {Number(product.delivery_price) > 0 ? (
-                        <div className="text-[10px] sm:text-xs text-gray-600 mb-1 sm:mb-2">
-                          {t("common.deliveryFee", { amount: Number(product.delivery_price).toFixed(2) })}
+                      {deliveryInfo.deliveryPrice > 0 ? (
+                        <div className="text-[10px] sm:text-xs text-amber-800 font-medium mb-1 sm:mb-2 flex items-center gap-1">
+                          <span>🚚</span>
+                          <span>+₹{deliveryInfo.deliveryPrice} {t("common.shippingShort")} (Free on {deliveryInfo.minFreeQty}+ {tu(product.unit || "unit")})</span>
                         </div>
                       ) : (
                         <div className="text-[10px] sm:text-xs text-green-600 font-medium mb-1 sm:mb-2">

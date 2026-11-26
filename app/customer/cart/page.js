@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useLanguage } from "@/app/context/LanguageContext";
+import { getDeliveryDetails } from "@/lib/pricing";
 
 export default function CustomerCartPage() {
   const router = useRouter();
@@ -132,9 +133,8 @@ export default function CustomerCartPage() {
   };
 
   const getItemDelivery = (item) => {
-    const minFreeQty = Number(item.min_free_delivery_qty) || 1;
-    const isFree = Number(item.quantity || 1) >= minFreeQty;
-    return isFree ? 0 : Number(item.delivery_price || 0);
+    const deliveryInfo = getDeliveryDetails(item, item.quantity || 1);
+    return deliveryInfo.currentDeliveryFee;
   };
 
   const getItemTotal = (item) => {
@@ -277,29 +277,36 @@ export default function CustomerCartPage() {
                     <p className="text-green-800 font-bold mb-1">
                       ₹{price.toFixed(2)} <span className="text-gray-500 text-sm font-normal">/ {item.unit_count || 1} {tu(item.unit || "unit")}</span>
                     </p>
-                    {Number(item.delivery_price) > 0 ? (
-                      getItemDelivery(item) === 0 ? (
-                        <p className="text-xs sm:text-sm text-green-700 font-semibold mb-1 flex items-center gap-1">
-                          <span>✓ {t("common.freeDelivery")}</span>
-                          <span className="text-[11px] text-green-600 font-normal">
-                            (Min {item.min_free_delivery_qty} {tu(item.unit || "unit")} met)
-                          </span>
-                        </p>
-                      ) : (
+                    {(() => {
+                      const deliveryInfo = getDeliveryDetails(item, item.quantity || 1);
+                      if (deliveryInfo.deliveryPrice <= 0) {
+                        return (
+                          <p className="text-xs sm:text-sm text-green-600 font-medium mb-1">
+                            {t("common.freeDelivery")}
+                          </p>
+                        );
+                      }
+                      if (deliveryInfo.isFreeDelivery) {
+                        return (
+                          <p className="text-xs sm:text-sm text-green-700 font-semibold mb-1 flex items-center gap-1">
+                            <span>✓ {t("common.freeDelivery")}</span>
+                            <span className="text-[11px] text-green-600 font-normal">
+                              (Min {deliveryInfo.minFreeQty} {tu(item.unit || "unit")} met)
+                            </span>
+                          </p>
+                        );
+                      }
+                      return (
                         <p className="text-xs sm:text-sm text-gray-600 mb-1">
-                          {t("common.deliveryFee", { amount: Number(item.delivery_price).toFixed(2) })}
-                          {Number(item.min_free_delivery_qty) > 1 && (
+                          {t("common.deliveryFee", { amount: Number(deliveryInfo.deliveryPrice).toFixed(2) })}
+                          {deliveryInfo.minFreeQty > 1 && (
                             <span className="text-amber-800 font-medium block text-[11px] mt-0.5">
-                              (Add {Math.max(0, Number(item.min_free_delivery_qty) - Number(item.quantity || 1))} more for Free Shipping)
+                              (Add {deliveryInfo.itemsNeededForFree} more for Free Shipping)
                             </span>
                           )}
                         </p>
-                      )
-                    ) : (
-                      <p className="text-xs sm:text-sm text-green-600 font-medium mb-1">
-                        {t("common.freeDelivery")}
-                      </p>
-                    )}
+                      );
+                    })()}
                     <p className="text-xs sm:text-sm text-gray-500">
                       {t("cart.stockLabel", { stock: item.stock_quantity ?? t("cart.stockAvailable") })}
                     </p>

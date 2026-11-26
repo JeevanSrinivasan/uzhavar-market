@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { useLanguage } from "@/app/context/LanguageContext";
+import { getDeliveryDetails } from "@/lib/pricing";
 
 export default function CheckoutPage() {
   const router = useRouter();
@@ -146,9 +147,8 @@ export default function CheckoutPage() {
   }
 
   function getItemDelivery(item) {
-    const minFreeQty = Number(item.min_free_delivery_qty) || 1;
-    const isFree = Number(item.quantity || 0) >= minFreeQty;
-    return isFree ? 0 : Number(item.delivery_price || 0);
+    const deliveryInfo = getDeliveryDetails(item, item.quantity || 1);
+    return deliveryInfo.currentDeliveryFee;
   }
 
   function getItemTotal(item) {

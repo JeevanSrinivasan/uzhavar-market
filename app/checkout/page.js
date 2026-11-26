@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '../../lib/supabase'
 import { useLanguage } from '@/app/context/LanguageContext'
 import LanguageToggle from '@/app/components/LanguageToggle'
+import { getDeliveryDetails } from '@/lib/pricing'
 
 export default function Checkout() {
   const router = useRouter()
@@ -59,14 +60,13 @@ export default function Checkout() {
   }, [router])
 
   const totalAmount = cart.reduce((total, item) => {
-    const minFree = Number(item.min_free_delivery_qty) || 1
-    const delivery = Number(item.quantity) >= minFree ? 0 : Number(item.delivery_price || 0)
-    return total + (Number(item.price) * item.quantity) + delivery
+    const deliveryInfo = getDeliveryDetails(item, item.quantity || 1)
+    return total + (Number(item.price) * item.quantity) + deliveryInfo.currentDeliveryFee
   }, 0)
 
   const totalDelivery = cart.reduce((total, item) => {
-    const minFree = Number(item.min_free_delivery_qty) || 1
-    return total + (Number(item.quantity) >= minFree ? 0 : Number(item.delivery_price || 0))
+    const deliveryInfo = getDeliveryDetails(item, item.quantity || 1)
+    return total + deliveryInfo.currentDeliveryFee
   }, 0)
 
   async function handlePlaceOrder(e) {

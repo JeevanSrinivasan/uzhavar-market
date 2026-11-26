@@ -20,7 +20,7 @@ export default function AddProduct() {
   const [description, setDescription] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [stock, setStock] = useState('')
-  const [variants, setVariants] = useState([{ price: '', unitCount: '1', unit: 'kg', deliveryPrice: '', minFreeDeliveryQty: '1' }])
+  const [variants, setVariants] = useState([{ price: '', unitCount: '1', unit: 'kg', deliveryPrice: '70', minFreeDeliveryQty: '5' }])
   const [images, setImages] = useState([])
 
   const [message, setMessage] = useState('')
@@ -36,7 +36,7 @@ export default function AddProduct() {
   }
 
   const addVariant = () => {
-    setVariants([...variants, { price: '', unitCount: '1', unit: 'kg', deliveryPrice: '', minFreeDeliveryQty: '1' }])
+    setVariants([...variants, { price: '', unitCount: '1', unit: 'kg', deliveryPrice: '70', minFreeDeliveryQty: '5' }])
   }
 
   const removeVariant = (index) => {
@@ -160,8 +160,9 @@ export default function AddProduct() {
       const isBag = v.unit.includes('bag');
       const finalUnitCount = isBag ? 1 : Number(v.unitCount);
       const displayName = variants.length > 1 ? `${name} - ${isBag ? '' : finalUnitCount + ' '}${v.unit}` : name;
-      const minQty = Math.max(1, Number(v.minFreeDeliveryQty || 1));
-      const delPrice = Number(v.deliveryPrice || 0);
+      const defaultMin = isBag ? 2 : 5;
+      const minQty = Math.max(1, Number(v.minFreeDeliveryQty || defaultMin));
+      const delPrice = Number(v.deliveryPrice !== '' && v.deliveryPrice !== undefined ? v.deliveryPrice : 70);
       const taggedDescription = formatProductDescriptionWithDelivery(description, {
         minFreeQty: minQty,
         deliveryPrice: delPrice,
@@ -212,7 +213,7 @@ export default function AddProduct() {
     setDescription('')
     setCategoryId('')
     setStock('')
-    setVariants([{ price: '', unitCount: '1', unit: 'kg', deliveryPrice: '', minFreeDeliveryQty: '1' }])
+    setVariants([{ price: '', unitCount: '1', unit: 'kg', deliveryPrice: '70', minFreeDeliveryQty: '5' }])
     setImages([])
 
     const fileInput = document.getElementById('product-image')

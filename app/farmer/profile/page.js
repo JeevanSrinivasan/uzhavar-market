@@ -37,6 +37,13 @@ export default function FarmerProfile() {
   const [passwordFeedback, setPasswordFeedback] = useState({ text: '', isError: false })
   const [sendingResetLink, setSendingResetLink] = useState(false)
 
+  // Delete Farmer Account Fields
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
+  const [deleteReason, setDeleteReason] = useState('')
+  const [deleteConfirmPhrase, setDeleteConfirmPhrase] = useState('')
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
+
   useEffect(() => {
     loadProfile()
   }, [])
@@ -221,6 +228,129 @@ export default function FarmerProfile() {
       showToast(errMsg, 'error')
     } finally {
       setSendingResetLink(false)
+    }
+  }
+
+  const REQUIRED_DELETE_PHRASE = 'Delete my Farmer Account'
+
+  async function handleDeleteFarmerAccount(e) {
+    if (e && e.preventDefault) e.preventDefault()
+    setDeleteError('')
+
+    const trimmedReason = deleteReason.trim()
+    const trimmedConfirm = deleteConfirmPhrase.trim()
+
+    if (!trimmedReason) {
+      const msg = t('farmer.deleteReasonRequired') || 'Please provide a reason for deleting your account.'
+      setDeleteError(msg)
+      showToast(msg, 'error')
+      return
+    }
+
+    if (trimmedConfirm !== REQUIRED_DELETE_PHRASE) {
+      const msg = t('farmer.deletePhraseMismatch') || 'Confirmation text does not match. Please type "Delete my Farmer Account" exactly.'
+      setDeleteError(msg)
+      showToast(msg, 'error')
+      return
+    }
+
+    if (!user?.id) {
+      const msg = 'User session not found. Please log in again.'
+      setDeleteError(msg)
+      showToast(msg, 'error')
+      return
+    }
+
+    setIsDeletingAccount(true)
+
+    try {
+      const farmerId = user.id
+
+      // 1. Hide all products belonging to this farmer immediately:
+      // Setting status='inactive', approval_status='rejected', and stock_quantity=0
+      // This immediately removes them from all storefront views (home, catalog, details)
+      const { error: productsUpdateError } = await supabase
+        .from('products')
+        .update({
+          status: 'inactive',
+          approval_status: 'rejected',
+          stock_quantity: 0,
+        })
+        .eq('farmer_id', farmerId)
+
+      if (productsUpdateError) {
+        console.warn('Products hide notice:', productsUpdateError)
+      }
+
+      // 2. Mark profile as deleted in public.profiles table (attempt delete, fallback to update)
+      const { error: profileDeleteErr } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', farmerId)
+
+      if (profileDeleteErr) {
+        console.warn('Profile delete notice, falling back to role deactivation:', profileDeleteErr)
+        await supabase
+          .from('profiles')
+          .update({
+            role: 'deleted',
+            is_banned: true,
+            full_name: 'Deleted Farmer',
+            phone: '',
+            address: '',
+            village: '',
+            district: '',
+            pincode: '',
+          })
+          .eq('id', farmerId)
+      }
+
+      // 3. Update auth user metadata so session and role reflect deleted status
+      try {
+        await supabase.auth.updateUser({
+          data: {
+            role: 'deleted',
+            account_deleted: true,
+            deleted_at: new Date().toISOString(),
+            deletion_reason: trimmedReason,
+          },
+        })
+      } catch (authMetaErr) {
+        console.warn('Auth metadata update notice:', authMetaErr)
+      }
+
+      // 4. Invoke server API endpoint for administrative deletion if service_role is configured
+      try {
+        await fetch('/api/farmer/delete-account', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: farmerId,
+            reason: trimmedReason,
+            confirmation: REQUIRED_DELETE_PHRASE,
+          }),
+        })
+      } catch (apiErr) {
+        console.warn('Server deletion API notice:', apiErr)
+      }
+
+      // 5. Sign out and purge local/session storage
+      await supabase.auth.signOut()
+      try {
+        localStorage.clear()
+        sessionStorage.clear()
+      } catch (storageErr) {}
+
+      const successText = t('farmer.accountDeletedSuccess') || 'Your farmer account has been deleted successfully. You have been logged out.'
+      showToast(successText, 'success', 6000)
+      setIsDeleteModalOpen(false)
+      router.replace('/login')
+    } catch (err) {
+      console.error('Account deletion error:', err)
+      const errMsg = err.message || 'Failed to delete account. Please try again.'
+      setDeleteError(errMsg)
+      showToast(errMsg, 'error')
+      setIsDeletingAccount(false)
     }
   }
 
@@ -543,8 +673,160 @@ export default function FarmerProfile() {
               )}
             </div>
           </form>
+
+          {/* DANGER ZONE - DELETE ACCOUNT */}
+          <div className="mt-10 pt-8 border-t border-red-100">
+            <div className="rounded-xl border border-red-200 bg-red-50/50 p-5 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">⚠️</span>
+                  <h3 className="text-base sm:text-lg font-bold text-red-900 m-0">
+                    {t('farmer.deleteAccountOptionTitle')}
+                  </h3>
+                </div>
+                <p className="text-xs sm:text-sm text-red-700 mt-1 mb-0 max-w-xl">
+                  {t('farmer.deleteAccountOptionDesc')}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsDeleteModalOpen(true)
+                  setDeleteReason('')
+                  setDeleteConfirmPhrase('')
+                  setDeleteError('')
+                }}
+                className="px-5 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-sm transition-colors shadow-sm whitespace-nowrap cursor-pointer active:scale-95 shrink-0"
+              >
+                🗑️ {t('farmer.deleteAccountBtn')}
+              </button>
+            </div>
+          </div>
         </div>
       </section>
+
+      {/* DELETE ACCOUNT CONFIRMATION MODAL */}
+      {isDeleteModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in duration-200">
+          <div
+            className="bg-white rounded-2xl max-w-lg w-full p-6 sm:p-8 shadow-2xl border border-gray-200 relative overflow-hidden"
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* Top red danger bar */}
+            <div className="absolute top-0 left-0 right-0 h-1.5 bg-red-600"></div>
+
+            <div className="flex items-center justify-between pb-4 border-b border-gray-100 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-red-100 text-red-700 flex items-center justify-center text-xl shrink-0">
+                  ⚠️
+                </div>
+                <div>
+                  <h3 className="text-lg sm:text-xl font-bold text-gray-900 m-0">
+                    {t('farmer.deleteModalTitle')}
+                  </h3>
+                  <span className="text-[11px] text-red-600 font-semibold uppercase tracking-wider">
+                    Irreversible Action
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isDeletingAccount}
+                onClick={() => setIsDeleteModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 text-2xl font-bold p-1 leading-none rounded-lg hover:bg-gray-100 disabled:opacity-40"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="bg-red-50 border border-red-200 rounded-xl p-3.5 mb-5 text-xs sm:text-sm text-red-800 leading-relaxed">
+              {t('farmer.deleteModalWarning')}
+            </div>
+
+            <form onSubmit={handleDeleteFarmerAccount} className="space-y-4">
+              {/* Deletion Reason Textbox */}
+              <div>
+                <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-1.5">
+                  {t('farmer.deleteReasonLabel')} <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  rows="3"
+                  required
+                  value={deleteReason}
+                  onChange={(e) => {
+                    setDeleteReason(e.target.value)
+                    if (deleteError) setDeleteError('')
+                  }}
+                  placeholder={t('farmer.deleteReasonPlaceholder')}
+                  disabled={isDeletingAccount}
+                  className="w-full p-3 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all resize-y min-h-[75px]"
+                />
+              </div>
+
+              {/* Confirmation Phrase Input */}
+              <div>
+                <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-1.5">
+                  {t('farmer.deleteConfirmPrompt', { phrase: REQUIRED_DELETE_PHRASE })}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={deleteConfirmPhrase}
+                  onChange={(e) => {
+                    setDeleteConfirmPhrase(e.target.value)
+                    if (deleteError) setDeleteError('')
+                  }}
+                  placeholder={REQUIRED_DELETE_PHRASE}
+                  disabled={isDeletingAccount}
+                  className="w-full p-3 border border-gray-300 rounded-lg text-sm font-medium outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent transition-all"
+                />
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Type: <span className="font-mono font-bold text-red-700 bg-red-50 px-1 py-0.5 rounded border border-red-200 select-all">Delete my Farmer Account</span>
+                </p>
+              </div>
+
+              {deleteError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs font-semibold text-red-700">
+                  {deleteError}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-gray-100">
+                <button
+                  type="button"
+                  disabled={isDeletingAccount}
+                  onClick={() => setIsDeleteModalOpen(false)}
+                  className="px-4 py-2.5 rounded-lg border border-gray-300 text-gray-700 font-semibold text-sm hover:bg-gray-50 transition-colors disabled:opacity-50"
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    isDeletingAccount ||
+                    !deleteReason.trim() ||
+                    deleteConfirmPhrase.trim() !== REQUIRED_DELETE_PHRASE
+                  }
+                  className="px-5 py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-sm transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
+                >
+                  {isDeletingAccount ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      <span>{t('farmer.deletingAccount')}</span>
+                    </>
+                  ) : (
+                    `⚠️ ${t('farmer.deleteAccountConfirmBtn')}`
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

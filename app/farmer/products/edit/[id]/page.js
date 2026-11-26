@@ -238,9 +238,10 @@ export default function EditProduct() {
     const finalImages = [...existingImages, ...uploadedNewImages].slice(0, 2)
 
     const isMainBag = trimmedUnit.includes('bag');
+    const defaultMin = isMainBag ? 2 : 5;
     const finalMainUnitCount = isMainBag ? 1 : Number(unitCount);
-    const minQty = Math.max(1, Number(minFreeDeliveryQty || 1));
-    const delPrice = Number(deliveryPrice || 0);
+    const minQty = Math.max(1, Number(minFreeDeliveryQty || defaultMin));
+    const delPrice = Number(deliveryPrice !== '' && deliveryPrice !== undefined ? deliveryPrice : 70);
     const taggedDescription = formatProductDescriptionWithDelivery(trimmedDescription, {
       minFreeQty: minQty,
       deliveryPrice: delPrice,
@@ -294,9 +295,10 @@ export default function EditProduct() {
     if (newVariants.length > 0) {
       let newProducts = newVariants.map((v) => {
         const isBag = v.unit.includes('bag');
+        const defaultVMin = isBag ? 2 : 5;
         const finalUnitCount = isBag ? 1 : Number(v.unitCount);
-        const vMinQty = Math.max(1, Number(v.minFreeDeliveryQty || 1));
-        const vDelPrice = Number(v.deliveryPrice || 0);
+        const vMinQty = Math.max(1, Number(v.minFreeDeliveryQty || defaultVMin));
+        const vDelPrice = Number(v.deliveryPrice !== '' && v.deliveryPrice !== undefined ? v.deliveryPrice : 70);
         const vTaggedDescription = formatProductDescriptionWithDelivery(trimmedDescription, {
           minFreeQty: vMinQty,
           deliveryPrice: vDelPrice,
